@@ -3,6 +3,7 @@ import io
 import re
 import logging
 from typing import List, Dict, Optional, Tuple
+from analysis import analyze_species_occurrences
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,62 @@ def parse_separated_file(content: bytes, delimiter: Optional[str] = None) -> Tup
     return rows, delimiter
 
 
+def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
+    """
+    Extract unique species occurrences from parsed data.
+    Requires exact column names: scientificName, scientificNameID, decimalLongitude, decimalLatitude.
+    Coordinates are rounded to 1 decimal place, and only unique combinations are returned.
+    
+    Args:
+        parsed_data: List of dictionaries from parsed file
+    
+    Returns:
+        List of unique dictionaries with scientificName, scientificNameID, decimalLongitude, decimalLatitude
+    """
+    if not parsed_data:
+        return []
+    
+    first_row = parsed_data[0]
+    required_columns = ['scientificName', 'scientificNameID', 'decimalLongitude', 'decimalLatitude']
+    
+    missing_columns = [col for col in required_columns if col not in first_row]
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns: {missing_columns}. "
+            f"Found columns: {list(first_row.keys())}"
+        )
+    
+    unique_occurrences = {}
+    
+    for row in parsed_data:
+        scientific_name = row.get('scientificName', '').strip()
+        scientific_name_id = row.get('scientificNameID', '').strip()
+        lon_str = row.get('decimalLongitude', '').strip()
+        lat_str = row.get('decimalLatitude', '').strip()
+        
+        try:
+            lon = round(float(lon_str), 1) if lon_str else None
+        except (ValueError, TypeError):
+            lon = None
+        
+        try:
+            lat = round(float(lat_str), 1) if lat_str else None
+        except (ValueError, TypeError):
+            lat = None
+        
+        key = (scientific_name, scientific_name_id, lon, lat)
+        
+        if key not in unique_occurrences:
+            unique_occurrences[key] = {
+                'scientificName': scientific_name,
+                'scientificNameID': scientific_name_id,
+                'decimalLongitude': lon,
+                'decimalLatitude': lat
+            }
+    
+    return list(unique_occurrences.values())
+
+
 def process_uploaded_files(files_data: List[Dict]) -> Dict:
     """
     Process uploaded files, looking for occurrence files and parsing them.
@@ -121,6 +178,16 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
                     result['column_count'] = len(parsed[0])
                     result['columns'] = list(parsed[0].keys())
                     result['parsed_data'] = parsed[:10]
+                    
+                    try:
+                        occurrences = extract_species_occurrences(parsed)
+                        result['original_occurrence_count'] = len(parsed)
+                        result['unique_occurrence_count'] = len(occurrences)
+                        analyzed_occurrences = analyze_species_occurrences(occurrences)
+                        result['analyzed_occurrences'] = analyzed_occurrences
+                        result['analyzed_count'] = len(analyzed_occurrences)
+                    except ValueError as e:
+                        result['analysis_error'] = str(e)
                 else:
                     result['parsed_data'] = []
                     result['error'] = 'File is empty or has no data rows'
