@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
+// Empty string means use relative URLs (works with nginx proxy)
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv'];
 

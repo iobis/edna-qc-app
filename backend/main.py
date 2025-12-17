@@ -16,9 +16,15 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Backend API")
 
-# Get allowed origins from environment variable, default to localhost for development
-allowed_origins_str = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
-allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
+# Get allowed origins from environment variable
+# With nginx proxy, requests come from the same origin, but we still configure CORS
+# for cases where the backend might be accessed directly
+allowed_origins_str = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+if allowed_origins_str:
+    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
+else:
+    # Default: allow common origins (nginx proxy makes this less critical)
+    allowed_origins = ["http://localhost", "https://ednaqc.obis.org"]
 
 app.add_middleware(
     CORSMiddleware,
