@@ -50,6 +50,7 @@ const getBadgeStyle = (value, colorScale) => {
 function App() {
   const [status, setStatus] = useState('loading');
   const [files, setFiles] = useState([]);
+  const [url, setUrl] = useState('');
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -78,16 +79,21 @@ function App() {
 
   const handleUpload = async (event) => {
     event.preventDefault();
-    if (!files.length) {
+    if (!files.length && !url.trim()) {
       return;
     }
 
     setLoading(true);
 
     const formData = new FormData();
-    files.forEach((file) => {
-      formData.append('files', file);
-    });
+    if (files.length > 0) {
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+    }
+    if (url.trim()) {
+      formData.append('url', url.trim());
+    }
 
     try {
       const response = await axios.post(`${API_URL}/api/upload`, formData, {
@@ -109,7 +115,7 @@ function App() {
     <div className="container mt-5">
       <div className="row">
         <div className="col-md-12">
-          <h1 className="mb-4">Geographic outlier analysis</h1>
+          <h1 className="mb-2">Geographic outlier analysis</h1>
         </div>
       </div>
       <div className="row mt-4">
@@ -129,10 +135,34 @@ function App() {
                 disabled={loading}
               />
             </div>
+            <div className="mb-3">
+              <label htmlFor="urlInput" className="form-label">
+                Or provide a URL to a zip file{' '}
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
+                  }}
+                  className="text-decoration-none"
+                >
+                  (example)
+                </a>
+              </label>
+              <input
+                id="urlInput"
+                type="url"
+                className="form-control"
+                placeholder=""
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                disabled={loading}
+              />
+            </div>
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={!files.length || loading}
+              disabled={(!files.length && !url.trim()) || loading}
             >
               {loading ? 'Analyzing...' : 'Upload'}
             </button>

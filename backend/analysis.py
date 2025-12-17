@@ -50,7 +50,6 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
 
             file_path = os.path.join(SPEEDY_DATA_DIR, f"{aphiaid}.parquet")
             if not os.path.exists(file_path):
-                logger.info(f"Speedy parquet file not found for aphiaid={aphiaid}: {file_path}")
                 continue
 
             try:

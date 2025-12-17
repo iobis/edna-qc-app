@@ -1,8 +1,11 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 import os
 import logging
+import requests
+import zipfile
+import io
 from parsing import process_uploaded_files
 
 logging.basicConfig(
@@ -31,33 +34,88 @@ ALLOWED_EXTENSIONS = {'.txt', '.csv', '.tsv'}
 
 
 @app.post("/api/upload")
-async def upload_files(files: List[UploadFile] = File(...)):
+async def upload_files(
+    files: Optional[List[UploadFile]] = File(None),
+    url: Optional[str] = Form(None)
+):
     """
-    Accept multiple uploaded files (txt, csv, tsv only) and process them.
+    Accept multiple uploaded files (txt, csv, tsv only) or a URL to a zip file.
     Looks for occurrence files and parses them.
     """
     file_infos = []
     invalid_files = []
     files_data = []
     
-    for file in files:
-        filename = file.filename or ""
-        ext = os.path.splitext(filename)[1].lower()
-        
-        if ext not in ALLOWED_EXTENSIONS:
-            invalid_files.append(filename)
-            continue
-        
-        content = await file.read()
-        file_infos.append({
-            "filename": file.filename,
-            "content_type": file.content_type,
-            "size": len(content)
-        })
-        files_data.append({
-            "filename": file.filename,
-            "content": content
-        })
+    # Handle file uploads
+    if files:
+        for file in files:
+            filename = file.filename or ""
+            ext = os.path.splitext(filename)[1].lower()
+            
+            if ext not in ALLOWED_EXTENSIONS:
+                invalid_files.append(filename)
+                continue
+            
+            content = await file.read()
+            file_infos.append({
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size": len(content)
+            })
+            files_data.append({
+                "filename": file.filename,
+                "content": content
+            })
+    
+    # Handle URL to zip file
+    if url:
+        try:
+            logger.info(f"Downloading zip file from URL: {url}")
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Check if it's a zip file
+            if not url.lower().endswith('.zip') and not response.headers.get('content-type', '').startswith('application/zip'):
+                raise HTTPException(
+                    status_code=400,
+                    detail="URL must point to a zip file"
+                )
+            
+            # Extract files from zip
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+                for zip_info in zip_file.namelist():
+                    filename = os.path.basename(zip_info)
+                    ext = os.path.splitext(filename)[1].lower()
+                    
+                    if ext in ALLOWED_EXTENSIONS:
+                        content = zip_file.read(zip_info)
+                        file_infos.append({
+                            "filename": filename,
+                            "content_type": "application/octet-stream",
+                            "size": len(content)
+                        })
+                        files_data.append({
+                            "filename": filename,
+                            "content": content
+                        })
+                    elif not zip_info.endswith('/'):  # Skip directories
+                        logger.info(f"Skipping non-text file in zip: {zip_info}")
+        except requests.RequestException as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to download file from URL: {str(e)}"
+            )
+        except zipfile.BadZipFile:
+            raise HTTPException(
+                status_code=400,
+                detail="URL does not point to a valid zip file"
+            )
+    
+    if not files_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid files provided. Please upload files or provide a URL to a zip file."
+        )
     
     if invalid_files:
         raise HTTPException(
