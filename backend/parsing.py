@@ -129,6 +129,9 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
         except (ValueError, TypeError):
             lat = None
         
+        aphiaid_match = re.search(r"(\d+)$", scientific_name_id) if scientific_name_id else None
+        aphiaid = int(aphiaid_match.group(1)) if aphiaid_match else None
+        
         key = (scientific_name, scientific_name_id, lon, lat)
         
         if key not in unique_occurrences:
@@ -136,7 +139,8 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
                 'scientificName': scientific_name,
                 'scientificNameID': scientific_name_id,
                 'decimalLongitude': lon,
-                'decimalLatitude': lat
+                'decimalLatitude': lat,
+                'aphiaid': aphiaid,
             }
     
     return list(unique_occurrences.values())
@@ -179,9 +183,15 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
                     result['columns'] = list(parsed[0].keys())
                     result['parsed_data'] = parsed[:10]
                     
+                    filtered_parsed = [
+                        row for row in parsed 
+                        if row.get('taxonRank', '').strip().lower() == 'species'
+                    ]
+                    result['filtered_row_count'] = len(filtered_parsed)
+                    
                     try:
-                        occurrences = extract_species_occurrences(parsed)
-                        result['original_occurrence_count'] = len(parsed)
+                        occurrences = extract_species_occurrences(filtered_parsed)
+                        result['original_occurrence_count'] = len(filtered_parsed)
                         result['unique_occurrence_count'] = len(occurrences)
                         analyzed_occurrences = analyze_species_occurrences(occurrences)
                         result['analyzed_occurrences'] = analyzed_occurrences

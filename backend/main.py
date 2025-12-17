@@ -3,11 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import os
 import logging
-from file_processor import process_uploaded_files
+from parsing import process_uploaded_files
 
 logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
