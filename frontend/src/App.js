@@ -195,6 +195,7 @@ function App() {
                       <thead className="">
                         <tr>
                           <th>Species</th>
+                          <th>Phylum</th>
                           <th>AphaID</th>
                           <th>Coordinates</th>
                           <th>Density</th>
@@ -224,6 +225,7 @@ function App() {
                                 occurrence.scientificName || '-'
                               )}
                             </td>
+                            <td>{occurrence.phylum || '-'}</td>
                             <td>
                               {occurrence.aphiaid ? (
                                 <a

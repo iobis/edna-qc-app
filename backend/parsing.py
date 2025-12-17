@@ -116,6 +116,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
     for row in parsed_data:
         scientific_name = row.get('scientificName', '').strip()
         scientific_name_id = row.get('scientificNameID', '').strip()
+        phylum = row.get('phylum', '').strip()
         lon_str = row.get('decimalLongitude', '').strip()
         lat_str = row.get('decimalLatitude', '').strip()
         
@@ -138,6 +139,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
             unique_occurrences[key] = {
                 'scientificName': scientific_name,
                 'scientificNameID': scientific_name_id,
+                'phylum': phylum,
                 'decimalLongitude': lon,
                 'decimalLatitude': lat,
                 'aphiaid': aphiaid,
