@@ -199,7 +199,7 @@ function App() {
                 </div>
               )}
               {uploadResult.processing?.analyzed_occurrences && (
-                <div className="mt-4">
+                <div className="mt-5">
                   <h5>Analysis Results</h5>
                   <div className="table-responsive">
                     <table className="table table-striped">
