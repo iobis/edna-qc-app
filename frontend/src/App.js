@@ -53,6 +53,128 @@ function App() {
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [annotations, setAnnotations] = useState({});
+  const [annotationsLoaded, setAnnotationsLoaded] = useState(false);
+
+  const ANNOTATIONS_STORAGE_KEY = 'occurrenceAnnotations';
+
+  const getAnnotationKey = (occurrence) => {
+    const aphiaid = occurrence.aphiaid ?? 'na';
+    const lon = occurrence.decimalLongitude ?? 'na';
+    const lat = occurrence.decimalLatitude ?? 'na';
+    return `${aphiaid}|${lon}|${lat}`;
+  };
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(ANNOTATIONS_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          setAnnotations(parsed);
+        }
+      }
+      setAnnotationsLoaded(true);
+    } catch (e) {
+      console.error('Failed to load annotations from localStorage', e);
+      setAnnotationsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!annotationsLoaded) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        ANNOTATIONS_STORAGE_KEY,
+        JSON.stringify(annotations)
+      );
+    } catch (e) {
+      console.error('Failed to save annotations to localStorage', e);
+    }
+  }, [annotations]);
+
+  const handleAnnotationChange = (key, value) => {
+    setAnnotations((prev) => {
+      const next = { ...prev };
+      if (!value) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+      return next;
+    });
+  };
+
+  const handleClearAnnotations = () => {
+    setAnnotations({});
+    try {
+      window.localStorage.removeItem(ANNOTATIONS_STORAGE_KEY);
+    } catch (e) {
+      console.error('Failed to clear annotations from localStorage', e);
+    }
+  };
+
+  const handleDownloadAnnotations = () => {
+    try {
+      if (!uploadResult?.processing?.analyzed_occurrences) {
+        return;
+      }
+
+      const occurrenceMap = {};
+      uploadResult.processing.analyzed_occurrences.forEach((occ) => {
+        const key = getAnnotationKey(occ);
+        occurrenceMap[key] = occ;
+      });
+
+      const annotationsList = Object.entries(annotations)
+        .map(([key, annotationValue]) => {
+          const [aphiaidStr, lonStr, latStr] = key.split('|');
+          const aphiaid = aphiaidStr !== 'na' ? parseInt(aphiaidStr, 10) : null;
+          const lon = lonStr !== 'na' ? parseFloat(lonStr) : null;
+          const lat = latStr !== 'na' ? parseFloat(latStr) : null;
+
+          const occurrence = occurrenceMap[key] || null;
+
+          return {
+            aphiaid: aphiaid,
+            scientificName: occurrence?.scientificName || null,
+            scientificNameID: occurrence?.scientificNameID || null,
+            phylum: occurrence?.phylum || null,
+            class: occurrence?.class || null,
+            decimalLongitude: lon,
+            decimalLatitude: lat,
+            density: occurrence?.density || null,
+            suitability: occurrence?.suitability || null,
+            annotation: annotationValue,
+          };
+        })
+        .sort((a, b) => {
+          // Sort by aphiaid, then by coordinates
+          if (a.aphiaid !== b.aphiaid) {
+            return (a.aphiaid || 0) - (b.aphiaid || 0);
+          }
+          if (a.decimalLongitude !== b.decimalLongitude) {
+            return (a.decimalLongitude || 0) - (b.decimalLongitude || 0);
+          }
+          return (a.decimalLatitude || 0) - (b.decimalLatitude || 0);
+        });
+
+      const dataStr = JSON.stringify(annotationsList, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'annotations.json';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to download annotations', e);
+    }
+  };
 
   const isValidFile = (filename) => {
     const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
@@ -200,7 +322,26 @@ function App() {
               )}
               {uploadResult.processing?.analyzed_occurrences && (
                 <div className="mt-5">
-                  <h5>Analysis Results</h5>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <h5 className="mb-0">Analysis Results</h5>
+                    <div>
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary btn-sm me-2"
+                        onClick={handleDownloadAnnotations}
+                        disabled={Object.keys(annotations).length === 0}
+                      >
+                        Download annotations
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline-danger btn-sm"
+                        onClick={handleClearAnnotations}
+                      >
+                        Clear annotations
+                      </button>
+                    </div>
+                  </div>
                   <div className="table-responsive">
                     <table className="table table-striped">
                       <thead className="">
@@ -212,6 +353,7 @@ function App() {
                           <th>Coordinates</th>
                           <th>Density</th>
                           <th>Suitability</th>
+                          <th>Annotation</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -222,7 +364,10 @@ function App() {
                             const db = b.density ?? Infinity;
                             return da - db;
                           })
-                          .map((occurrence, index) => (
+                          .map((occurrence, index) => {
+                            const rowKey = getAnnotationKey(occurrence);
+                            const annotationValue = annotations[rowKey] || '';
+                            return (
                           <tr key={index}>
                             <td>
                               {occurrence.aphiaid ? (
@@ -288,8 +433,21 @@ function App() {
                                 '-'
                               )}
                             </td>
+                            <td>
+                              <select
+                                className="form-select form-select-sm"
+                                value={annotationValue}
+                                onChange={(e) =>
+                                  handleAnnotationChange(rowKey, e.target.value)
+                                }
+                              >
+                                <option value="">-</option>
+                                <option value="accept">Accept</option>
+                                <option value="reject">Reject</option>
+                              </select>
+                            </td>
                           </tr>
-                        ))}
+                        );})}
                       </tbody>
                     </table>
                   </div>
