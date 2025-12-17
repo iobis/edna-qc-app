@@ -139,6 +139,11 @@ function App() {
 
           const occurrence = occurrenceMap[key] || null;
 
+          // Only include annotations that match occurrences in the current dataset
+          if (!occurrence) {
+            return null;
+          }
+
           return {
             aphiaid: aphiaid,
             scientificName: occurrence?.scientificName || null,
@@ -152,6 +157,7 @@ function App() {
             annotation: annotationValue,
           };
         })
+        .filter(item => item !== null) // Remove annotations that don't match current dataset
         .sort((a, b) => {
           // Sort by aphiaid, then by coordinates
           if (a.aphiaid !== b.aphiaid) {
@@ -201,6 +207,18 @@ function App() {
     setUploadError(null);
   };
 
+  const handleUrlChange = (event) => {
+    setUrl(event.target.value);
+    setFiles([]);
+    // Clear the file input element
+    const fileInput = document.getElementById('fileUpload');
+    if (fileInput) {
+      fileInput.value = '';
+    }
+    setUploadResult(null);
+    setUploadError(null);
+  };
+
   const handleUpload = async (event) => {
     event.preventDefault();
     if (!files.length && !url.trim()) {
@@ -209,6 +227,7 @@ function App() {
 
     setLoading(true);
     setUploadResult(null);
+    setUploadError(null); // Clear errors when starting a new analysis
 
     const formData = new FormData();
     if (files.length > 0) {
@@ -278,6 +297,14 @@ function App() {
                   onClick={(e) => {
                     e.preventDefault();
                     setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
+                    setFiles([]);
+                    // Clear the file input element
+                    const fileInput = document.getElementById('fileUpload');
+                    if (fileInput) {
+                      fileInput.value = '';
+                    }
+                    setUploadResult(null);
+                    setUploadError(null);
                   }}
                   className="text-decoration-none"
                 >
@@ -290,7 +317,7 @@ function App() {
                 className="form-control"
                 placeholder=""
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={handleUrlChange}
                 disabled={loading}
               />
             </div>
