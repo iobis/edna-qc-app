@@ -122,6 +122,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
         scientific_name = row.get('scientificName', '').strip()
         scientific_name_id = row.get('scientificNameID', '').strip()
         phylum = row.get('phylum', '').strip()
+        class_name = row.get('class', '').strip()
         lon_str = row.get('decimalLongitude', '').strip()
         lat_str = row.get('decimalLatitude', '').strip()
         
@@ -145,6 +146,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
                 'scientificName': scientific_name,
                 'scientificNameID': scientific_name_id,
                 'phylum': phylum,
+                'class': class_name,
                 'decimalLongitude': lon,
                 'decimalLatitude': lat,
                 'aphiaid': aphiaid,
@@ -168,7 +170,7 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
 
     logger.info("Normalizing %d AphiaIDs via WoRMS", len(unique_ids))
 
-    id_to_valid: Dict[int, int] = {}
+    id_to_data: Dict[int, Dict] = {}
 
     batch_size = 50
     for i in range(0, len(unique_ids), batch_size):
@@ -189,17 +191,26 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
                 original = record.get("AphiaID")
                 valid = record.get("valid_AphiaID") or original
                 if original is not None and valid is not None:
-                    id_to_valid[int(original)] = int(valid)
+                    id_to_data[int(original)] = {
+                        "valid_aphiaid": int(valid),
+                        "phylum": record.get("phylum") or "",
+                        "class": record.get("class") or ""
+                    }
             except Exception:
                 continue
 
-    if not id_to_valid:
+    if not id_to_data:
         return
 
     for occ in occurrences:
         aphiaid = occ.get("aphiaid")
-        if aphiaid in id_to_valid:
-            occ["aphiaid"] = id_to_valid[aphiaid]
+        if aphiaid in id_to_data:
+            data = id_to_data[aphiaid]
+            occ["aphiaid"] = data["valid_aphiaid"]
+            if not occ.get("phylum"):
+                occ["phylum"] = data["phylum"]
+            if not occ.get("class"):
+                occ["class"] = data["class"]
 
 
 def process_uploaded_files(files_data: List[Dict]) -> Dict:

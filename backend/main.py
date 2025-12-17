@@ -35,8 +35,8 @@ ALLOWED_EXTENSIONS = {'.txt', '.csv', '.tsv'}
 
 @app.post("/api/upload")
 async def upload_files(
-    files: Optional[List[UploadFile]] = File(None),
-    url: Optional[str] = Form(None)
+    files: List[UploadFile] = File(default=[]),
+    url: Optional[str] = Form(default=None)
 ):
     """
     Accept multiple uploaded files (txt, csv, tsv only) or a URL to a zip file.

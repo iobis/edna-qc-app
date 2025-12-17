@@ -6,7 +6,6 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv'];
 
-// Generic badge style function for any column
 const getBadgeStyle = (value, colorScale) => {
   const numValue = parseFloat(value) || 0;
   const color = colorScale(numValue);
@@ -85,6 +84,7 @@ function App() {
     }
 
     setLoading(true);
+    setUploadResult(null);
 
     const formData = new FormData();
     if (files.length > 0) {
@@ -117,9 +117,19 @@ function App() {
       <div className="row">
         <div className="col-md-12">
           <h1 className="mb-2">Geographic outlier analysis</h1>
+          <p>This app performs spatial and environmental outlier detection on species occurrence data. Upload Darwin Core text separated data files, or point to a Darwin Core Archive online. Datasets should include WoRMS LSIDs in the scientificNameID column. For a typical dataset, the analysis should finish within one minute. Click on the <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
+                  }}
+                  className="text-decoration-none"
+                >
+                  (example)
+                </a> link to load an example dataset.</p>
         </div>
       </div>
-      <div className="row mt-4">
+      <div className="row mt-3">
         <div className="col-md-12">
           <form onSubmit={handleUpload}>
             <div className="mb-3">
@@ -182,7 +192,7 @@ function App() {
             </div>
           )}
           {uploadResult && (
-            <div className="mt-3">
+            <div className="mt-4">
               {uploadResult.processing?.analysis_error && (
                 <div className="alert alert-warning">
                   {uploadResult.processing.analysis_error}
@@ -197,6 +207,7 @@ function App() {
                         <tr>
                           <th>Species</th>
                           <th>Phylum</th>
+                          <th>Class</th>
                           <th>AphaID</th>
                           <th>Coordinates</th>
                           <th>Density</th>
@@ -227,6 +238,7 @@ function App() {
                               )}
                             </td>
                             <td>{occurrence.phylum || '-'}</td>
+                            <td>{occurrence.class || '-'}</td>
                             <td>
                               {occurrence.aphiaid ? (
                                 <a
