@@ -1,9 +1,51 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { interpolateSpectral } from 'd3-scale-chromatic';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv'];
+
+// Generic badge style function for any column
+const getBadgeStyle = (value, colorScale) => {
+  const numValue = parseFloat(value) || 0;
+  const color = colorScale(numValue);
+  let backgroundColor = 'rgba(200, 200, 200, 0.3)';
+  
+  try {
+    if (color && color.startsWith('#')) {
+      const hex = color.replace('#', '');
+      if (hex.length === 6) {
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        backgroundColor = `rgba(${r}, ${g}, ${b}, 0.4)`;
+      }
+    } else if (color && color.startsWith('rgb')) {
+      const rgbMatch = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+      if (rgbMatch) {
+        const r = parseInt(rgbMatch[1]);
+        const g = parseInt(rgbMatch[2]);
+        const b = parseInt(rgbMatch[3]);
+        backgroundColor = `rgba(${r}, ${g}, ${b}, 0.4)`;
+      }
+    }
+  } catch (error) {
+    console.error('Color parsing error:', error);
+  }
+  
+  return {
+    backgroundColor: backgroundColor,
+    color: '#000000',
+    padding: '4px 8px',
+    borderRadius: '12px',
+    fontSize: '0.875rem',
+    fontWeight: '500',
+    display: 'inline-block',
+    minWidth: '40px',
+    textAlign: 'center'
+  };
+};
 
 function App() {
   const [status, setStatus] = useState('loading');
@@ -124,8 +166,7 @@ function App() {
                         <tr>
                           <th>Species</th>
                           <th>AphaID</th>
-                          <th>Longitude</th>
-                          <th>Latitude</th>
+                          <th>Coordinates</th>
                           <th>Density</th>
                           <th>Suitability</th>
                         </tr>
@@ -166,17 +207,41 @@ function App() {
                                 '-'
                               )}
                             </td>
-                            <td>{occurrence.decimalLongitude !== null && occurrence.decimalLongitude !== undefined ? occurrence.decimalLongitude : '-'}</td>
-                            <td>{occurrence.decimalLatitude !== null && occurrence.decimalLatitude !== undefined ? occurrence.decimalLatitude : '-'}</td>
                             <td>
-                              {occurrence.density !== null && occurrence.density !== undefined
-                                ? Number(occurrence.density).toFixed(4)
-                                : '-'}
+                              {occurrence.decimalLongitude !== null &&
+                              occurrence.decimalLongitude !== undefined &&
+                              occurrence.decimalLatitude !== null &&
+                              occurrence.decimalLatitude !== undefined ? (
+                                <a
+                                  href={`https://wktmap.com/?wkt=${encodeURIComponent(
+                                    `POINT (${occurrence.decimalLongitude} ${occurrence.decimalLatitude})`
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {`${occurrence.decimalLongitude}, ${occurrence.decimalLatitude}`}
+                                </a>
+                              ) : (
+                                '-'
+                              )}
                             </td>
                             <td>
-                              {occurrence.suitability !== null && occurrence.suitability !== undefined
-                                ? Number(occurrence.suitability).toFixed(4)
-                                : '-'}
+                              {occurrence.density !== null && occurrence.density !== undefined ? (
+                                <span style={getBadgeStyle(occurrence.density, interpolateSpectral)}>
+                                  {Number(occurrence.density).toFixed(4)}
+                                </span>
+                              ) : (
+                                '-'
+                              )}
+                            </td>
+                            <td>
+                              {occurrence.suitability !== null && occurrence.suitability !== undefined ? (
+                                <span style={getBadgeStyle(occurrence.suitability, interpolateSpectral)}>
+                                  {Number(occurrence.suitability).toFixed(4)}
+                                </span>
+                              ) : (
+                                '-'
+                              )}
                             </td>
                           </tr>
                         ))}
