@@ -67,21 +67,18 @@ async def upload_files(
                 "content": content
             })
     
-    # Handle URL to zip file
     if url:
         try:
             logger.info(f"Downloading zip file from URL: {url}")
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             
-            # Check if it's a zip file
             if not url.lower().endswith('.zip') and not response.headers.get('content-type', '').startswith('application/zip'):
                 raise HTTPException(
                     status_code=400,
                     detail="URL must point to a zip file"
                 )
             
-            # Extract files from zip
             with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
                 for zip_info in zip_file.namelist():
                     filename = os.path.basename(zip_info)
@@ -98,7 +95,7 @@ async def upload_files(
                             "filename": filename,
                             "content": content
                         })
-                    elif not zip_info.endswith('/'):  # Skip directories
+                    elif not zip_info.endswith('/'):
                         logger.info(f"Skipping non-text file in zip: {zip_info}")
         except requests.RequestException as e:
             raise HTTPException(

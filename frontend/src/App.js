@@ -73,6 +73,7 @@ function App() {
     }
     
     setFiles(selectedFiles);
+    setUrl('');
     setUploadResult(null);
     setUploadError(null);
   };

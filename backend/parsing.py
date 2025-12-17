@@ -3,9 +3,14 @@ import io
 import re
 import logging
 from typing import List, Dict, Optional, Tuple
+
+import requests
+
 from analysis import analyze_species_occurrences
 
 logger = logging.getLogger(__name__)
+
+WORMS_BATCH_URL = "https://www.marinespecies.org/rest/AphiaRecordsByAphiaIDs"
 
 
 def find_occurrence_file(filenames: List[str]) -> Optional[str]:
@@ -111,7 +116,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
             f"Found columns: {list(first_row.keys())}"
         )
     
-    unique_occurrences = {}
+    unique_occurrences: Dict[Tuple[str, str, Optional[float], Optional[float]], Dict] = {}
     
     for row in parsed_data:
         scientific_name = row.get('scientificName', '').strip()
@@ -146,6 +151,55 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
             }
     
     return list(unique_occurrences.values())
+
+
+def normalize_aphiaids(occurrences: List[Dict]) -> None:
+    """
+    Replace AphiaIDs with their accepted (valid) AphiaIDs using the WoRMS API.
+
+    This function modifies the occurrences list in place.
+    """
+    unique_ids = sorted(
+        {occ["aphiaid"] for occ in occurrences if occ.get("aphiaid") is not None}
+    )
+
+    if not unique_ids:
+        return
+
+    logger.info("Normalizing %d AphiaIDs via WoRMS", len(unique_ids))
+
+    id_to_valid: Dict[int, int] = {}
+
+    batch_size = 50
+    for i in range(0, len(unique_ids), batch_size):
+        batch = unique_ids[i : i + batch_size]
+        params = [("aphiaids[]", str(aid)) for aid in batch]
+        try:
+            response = requests.get(WORMS_BATCH_URL, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.info("Failed to normalize AphiaIDs batch %s: %s", batch, exc)
+            continue
+
+        for record in data:
+            if not record:
+                continue
+            try:
+                original = record.get("AphiaID")
+                valid = record.get("valid_AphiaID") or original
+                if original is not None and valid is not None:
+                    id_to_valid[int(original)] = int(valid)
+            except Exception:
+                continue
+
+    if not id_to_valid:
+        return
+
+    for occ in occurrences:
+        aphiaid = occ.get("aphiaid")
+        if aphiaid in id_to_valid:
+            occ["aphiaid"] = id_to_valid[aphiaid]
 
 
 def process_uploaded_files(files_data: List[Dict]) -> Dict:
@@ -193,6 +247,8 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
                     
                     try:
                         occurrences = extract_species_occurrences(filtered_parsed)
+                        # Normalize AphiaIDs to their accepted (valid) IDs via WoRMS
+                        normalize_aphiaids(occurrences)
                         result['original_occurrence_count'] = len(filtered_parsed)
                         result['unique_occurrence_count'] = len(occurrences)
                         analyzed_occurrences = analyze_species_occurrences(occurrences)
