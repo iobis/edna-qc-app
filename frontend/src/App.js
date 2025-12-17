@@ -240,7 +240,7 @@ function App() {
     <div className="container mt-5">
       <div className="row">
         <div className="col-md-12">
-          <h1 className="mb-2">Geographic outlier analysis</h1>
+          <h1 className="mb-2">Geographic outlier detection</h1>
           <p>This app performs spatial and environmental outlier detection on species occurrence data. Upload Darwin Core text separated data files, or point to a Darwin Core Archive online. Datasets should include WoRMS LSIDs in the scientificNameID column. For a typical dataset, the analysis should finish within one minute. Click on the <a
                   href="#"
                   onClick={(e) => {
