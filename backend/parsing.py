@@ -112,6 +112,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
     
     missing_columns = [col for col in required_columns if col not in first_row]
     if missing_columns:
+        logging.error(f"Missing required columns: {missing_columns}. Found columns: {list(first_row.keys())}")
         raise ValueError(
             f"Missing required columns: {missing_columns}. "
             f"Found columns: {list(first_row.keys())}"
@@ -223,6 +224,10 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
     
     Returns:
         Dict with processing results
+    
+    Raises:
+        ValueError: If file parsing fails or required columns are missing
+        Exception: For other processing errors
     """
     filenames = [f['filename'] for f in files_data]
     occurrence_filename = find_occurrence_file(filenames)
@@ -230,8 +235,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
     result = {
         'occurrence_file_found': occurrence_filename is not None,
         'occurrence_filename': occurrence_filename,
-        'parsed_data': None,
-        'error': None
+        'parsed_data': None
     }
     
     if occurrence_filename:
@@ -241,41 +245,40 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
         )
         
         if occurrence_file:
-            try:
-                parsed, detected_delimiter = parse_separated_file(occurrence_file['content'])
-                result['row_count'] = len(parsed)
-                result['detected_delimiter'] = detected_delimiter
-                
-                if parsed:
-                    result['column_count'] = len(parsed[0])
-                    result['columns'] = list(parsed[0].keys())
-                    result['parsed_data'] = parsed[:10]
-                    
-                    filtered_parsed = [
-                        row for row in parsed 
-                        if row.get('taxonRank', '').strip().lower() == 'species'
-                    ]
-                    result['filtered_row_count'] = len(filtered_parsed)
-                    
-                    try:
-                        occurrences = extract_species_occurrences(filtered_parsed)
-                        # Normalize AphiaIDs to their accepted (valid) IDs via WoRMS
-                        normalize_aphiaids(occurrences)
-                        result['original_occurrence_count'] = len(filtered_parsed)
-                        result['unique_occurrence_count'] = len(occurrences)
-                        analyzed_occurrences = analyze_species_occurrences(occurrences)
-                        result['analyzed_occurrences'] = analyzed_occurrences
-                        result['analyzed_count'] = len(analyzed_occurrences)
-                    except ValueError as e:
-                        result['analysis_error'] = str(e)
-                else:
-                    result['parsed_data'] = []
-                    result['error'] = 'File is empty or has no data rows'
-            except Exception as e:
-                logger.error(f"Error processing file: {e}", exc_info=True)
-                result['error'] = str(e)
-                import traceback
-                result['traceback'] = traceback.format_exc()
+            parsed, detected_delimiter = parse_separated_file(occurrence_file['content'])
+            result['row_count'] = len(parsed)
+            result['detected_delimiter'] = detected_delimiter
+            
+            if not parsed:
+                raise ValueError('File is empty or has no data rows')
+            
+            result['column_count'] = len(parsed[0])
+            result['columns'] = list(parsed[0].keys())
+            result['parsed_data'] = parsed[:10]
+            
+            # Validate required columns exist in the file before filtering
+            required_columns = ['scientificName', 'scientificNameID', 'decimalLongitude', 'decimalLatitude']
+            missing_columns = [col for col in required_columns if col not in parsed[0]]
+            if missing_columns:
+                raise ValueError(
+                    f"Missing required columns: {missing_columns}. "
+                    f"Found columns: {list(parsed[0].keys())}"
+                )
+            
+            filtered_parsed = [
+                row for row in parsed 
+                if row.get('taxonRank', '').strip().lower() == 'species'
+            ]
+            result['filtered_row_count'] = len(filtered_parsed)
+            
+            occurrences = extract_species_occurrences(filtered_parsed)
+            # Normalize AphiaIDs to their accepted (valid) IDs via WoRMS
+            normalize_aphiaids(occurrences)
+            result['original_occurrence_count'] = len(filtered_parsed)
+            result['unique_occurrence_count'] = len(occurrences)
+            analyzed_occurrences = analyze_species_occurrences(occurrences)
+            result['analyzed_occurrences'] = analyzed_occurrences
+            result['analyzed_count'] = len(analyzed_occurrences)
     
     return result
 

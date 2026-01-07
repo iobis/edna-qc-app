@@ -27,13 +27,20 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
 
     The score is currently taken to be the suitability value.
     Both density and suitability are attached to the occurrence.
+    
+    Raises:
+        Exception: If database connection or query execution fails
     """
     if not occurrences:
         return occurrences
 
     conn = duckdb.connect(database=":memory:")
-    conn.execute("INSTALL h3 FROM community;")
-    conn.execute("LOAD h3;")
+    try:
+        conn.execute("INSTALL h3 FROM community;")
+        conn.execute("LOAD h3;")
+    except Exception as e:
+        conn.close()
+        raise Exception(f"Failed to install or load h3 extension: {e}")
 
     try:
         for occurrence in occurrences:
@@ -61,8 +68,9 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
                     """,
                     [file_path, float(lat), float(lon), SPEEDY_RESOLUTION],
                 ).fetchone()
-            except Exception:
-                continue
+            except Exception as e:
+                logger.error(f"Failed to query parquet file {file_path} for occurrence: {e}")
+                raise Exception(f"Failed to query parquet file {file_path}: {e}")
 
             if result is None:
                 continue

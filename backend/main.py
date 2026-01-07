@@ -16,14 +16,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Backend API")
 
-# Get allowed origins from environment variable
-# With nginx proxy, requests come from the same origin, but we still configure CORS
-# for cases where the backend might be accessed directly
 allowed_origins_str = os.environ.get("CORS_ALLOWED_ORIGINS", "")
 if allowed_origins_str:
     allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
 else:
-    # Default: allow common origins (nginx proxy makes this less critical)
     allowed_origins = ["http://localhost", "https://ednaqc.obis.org"]
 
 app.add_middleware(
@@ -130,7 +126,19 @@ async def upload_files(
             detail=f"Invalid file types. Only {', '.join(ALLOWED_EXTENSIONS)} files are allowed. Invalid files: {', '.join(invalid_files)}"
         )
     
-    processing_result = process_uploaded_files(files_data)
+    try:
+        processing_result = process_uploaded_files(files_data)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Error processing files: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error processing files: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error while processing files: {str(e)}"
+        )
     
     return {
         "files_received": len(file_infos),
