@@ -257,10 +257,26 @@ function App() {
 
   return (
     <div className="container mt-5">
+      <style>{`
+        .dwca-term {
+          font-family: monospace;
+          color: var(--bs-body-color);
+          background-color: #dff5eb;
+          padding: 2px 6px;
+          border-radius: 4px;
+        }
+      `}</style>
       <div className="row">
         <div className="col-md-12">
           <h1 className="mb-2">Geographic outlier detection</h1>
-          <p>This app performs spatial and environmental outlier detection on species occurrence data. Upload Darwin Core text separated data files or zip files, or point to a Darwin Core Archive online. Datasets should include WoRMS LSIDs in the scientificNameID column. For a typical dataset, the analysis should finish within one minute. Click on the <a
+          <p>
+            This app performs spatial and environmental outlier detection on species occurrence data.
+            Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
+            Datasets should always include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
+            If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
+            Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
+            For a typical dataset, the analysis should finish within one minute.
+            Click on the <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();

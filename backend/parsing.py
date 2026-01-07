@@ -11,6 +11,7 @@ from analysis import analyze_species_occurrences
 logger = logging.getLogger(__name__)
 
 WORMS_BATCH_URL = "https://www.marinespecies.org/rest/AphiaRecordsByAphiaIDs"
+WORMS_MATCH_NAMES_URL = "https://www.marinespecies.org/rest/AphiaRecordsByMatchNames"
 
 
 def find_occurrence_file(filenames: List[str]) -> Optional[str]:
@@ -92,14 +93,16 @@ def parse_separated_file(content: bytes, delimiter: Optional[str] = None) -> Tup
     return rows, delimiter
 
 
-def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
+def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[Dict[str, Dict]] = None) -> List[Dict]:
     """
     Extract unique species occurrences from parsed data.
-    Requires exact column names: scientificName, scientificNameID, decimalLongitude, decimalLatitude.
+    Requires exact column names: scientificName, decimalLongitude, decimalLatitude.
+    scientificNameID is optional - if missing, will use name_matches if provided.
     Coordinates are rounded to 1 decimal place, and only unique combinations are returned.
     
     Args:
         parsed_data: List of dictionaries from parsed file
+        name_matches: Optional dictionary mapping scientific names to WoRMS match data
     
     Returns:
         List of unique dictionaries with scientificName, scientificNameID, decimalLongitude, decimalLatitude
@@ -108,7 +111,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
         return []
     
     first_row = parsed_data[0]
-    required_columns = ['scientificName', 'scientificNameID', 'decimalLongitude', 'decimalLatitude']
+    required_columns = ['scientificName', 'decimalLongitude', 'decimalLatitude']
     
     missing_columns = [col for col in required_columns if col not in first_row]
     if missing_columns:
@@ -118,7 +121,7 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
             f"Found columns: {list(first_row.keys())}"
         )
     
-    unique_occurrences: Dict[Tuple[str, str, Optional[float], Optional[float]], Dict] = {}
+    unique_occurrences: Dict[Tuple[str, Optional[str], Optional[float], Optional[float]], Dict] = {}
     
     for row in parsed_data:
         scientific_name = row.get('scientificName', '').strip()
@@ -138,8 +141,21 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
         except (ValueError, TypeError):
             lat = None
         
-        aphiaid_match = re.search(r"(\d+)$", scientific_name_id) if scientific_name_id else None
-        aphiaid = int(aphiaid_match.group(1)) if aphiaid_match else None
+        # If scientificNameID is missing and we have name matches, use the match
+        rank = None
+        if not scientific_name_id and name_matches and scientific_name in name_matches:
+            match = name_matches[scientific_name]
+            scientific_name_id = match.get('scientificNameID', '')
+            if not phylum:
+                phylum = match.get('phylum', '')
+            if not class_name:
+                class_name = match.get('class', '')
+            aphiaid = match.get('aphiaid')
+            rank = match.get('rank', '')
+        else:
+            # Extract aphiaid from scientificNameID if present
+            aphiaid_match = re.search(r"(\d+)$", scientific_name_id) if scientific_name_id else None
+            aphiaid = int(aphiaid_match.group(1)) if aphiaid_match else None
         
         key = (scientific_name, scientific_name_id, lon, lat)
         
@@ -153,8 +169,77 @@ def extract_species_occurrences(parsed_data: List[Dict]) -> List[Dict]:
                 'decimalLatitude': lat,
                 'aphiaid': aphiaid,
             }
+            if rank:
+                unique_occurrences[key]['rank'] = rank
     
     return list(unique_occurrences.values())
+
+
+def match_names_with_worms(scientific_names: List[str]) -> Dict[str, Dict]:
+    """
+    Match scientific names with WoRMS using the match names API.
+    Only returns exact matches (match_type="exact"), using the first match for each name.
+    
+    Args:
+        scientific_names: List of unique scientific names to match
+    
+    Returns:
+        Dictionary mapping scientific name to match data with keys:
+        - aphiaid: valid AphiaID
+        - phylum: phylum name
+        - class: class name
+        - scientificNameID: LSID constructed from AphiaID
+    """
+    if not scientific_names:
+        return {}
+    
+    name_to_match: Dict[str, Dict] = {}
+    
+    batch_size = 50
+    for i in range(0, len(scientific_names), batch_size):
+        batch = scientific_names[i : i + batch_size]
+        params = [
+            ("marine_only", "false"),
+            ("extant_only", "false"),
+            ("match_authority", "false")
+        ]
+        for name in batch:
+            params.append(("scientificnames[]", name))
+        
+        try:
+            response = requests.get(WORMS_MATCH_NAMES_URL, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.warning("Failed to match names batch %s: %s", batch[:3], exc)
+            continue
+        
+        # Process response - it's a list of lists, one per input name
+        for idx, name_matches in enumerate(data):
+            if idx >= len(batch):
+                continue
+            
+            name = batch[idx]
+            if not name_matches:
+                continue
+            
+            # Find first exact match
+            for match in name_matches:
+                if match.get("match_type") == "exact":
+                    aphiaid = match.get("valid_AphiaID") or match.get("AphiaID")
+                    if aphiaid:
+                        rank = match.get("rank", "").lower() if match.get("rank") else ""
+                        name_to_match[name] = {
+                            "aphiaid": int(aphiaid),
+                            "phylum": match.get("phylum") or "",
+                            "class": match.get("class") or "",
+                            "rank": rank,
+                            "scientificNameID": f"urn:lsid:marinespecies.org:taxname:{aphiaid}"
+                        }
+                    break
+    
+    logger.info("Matched %d out of %d names with WoRMS", len(name_to_match), len(scientific_names))
+    return name_to_match
 
 
 def normalize_aphiaids(occurrences: List[Dict]) -> None:
@@ -193,10 +278,12 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
                 original = record.get("AphiaID")
                 valid = record.get("valid_AphiaID") or original
                 if original is not None and valid is not None:
+                    rank = record.get("rank", "").lower() if record.get("rank") else ""
                     id_to_data[int(original)] = {
                         "valid_aphiaid": int(valid),
                         "phylum": record.get("phylum") or "",
-                        "class": record.get("class") or ""
+                        "class": record.get("class") or "",
+                        "rank": rank
                     }
             except Exception:
                 continue
@@ -213,6 +300,9 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
                 occ["phylum"] = data["phylum"]
             if not occ.get("class"):
                 occ["class"] = data["class"]
+            # Add rank from API response
+            if "rank" in data:
+                occ["rank"] = data["rank"]
 
 
 def process_uploaded_files(files_data: List[Dict]) -> Dict:
@@ -257,7 +347,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
             result['parsed_data'] = parsed[:10]
             
             # Validate required columns exist in the file before filtering
-            required_columns = ['scientificName', 'scientificNameID', 'decimalLongitude', 'decimalLatitude']
+            required_columns = ['scientificName', 'decimalLongitude', 'decimalLatitude']
             missing_columns = [col for col in required_columns if col not in parsed[0]]
             if missing_columns:
                 raise ValueError(
@@ -265,15 +355,63 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
                     f"Found columns: {list(parsed[0].keys())}"
                 )
             
-            filtered_parsed = [
-                row for row in parsed 
-                if row.get('taxonRank', '').strip().lower() == 'species'
-            ]
+            # Filter for species rank if taxonRank column exists, otherwise include all rows
+            has_taxon_rank = 'taxonRank' in parsed[0]
+            if has_taxon_rank:
+                filtered_parsed = [
+                    row for row in parsed 
+                    if row.get('taxonRank', '').strip().lower() == 'species'
+                ]
+            else:
+                # If taxonRank column doesn't exist, include all rows (assume they are species-level)
+                filtered_parsed = parsed
             result['filtered_row_count'] = len(filtered_parsed)
             
-            occurrences = extract_species_occurrences(filtered_parsed)
-            # Normalize AphiaIDs to their accepted (valid) IDs via WoRMS
-            normalize_aphiaids(occurrences)
+            # Check if scientificNameID is missing - if so, match names with WoRMS
+            has_scientific_name_id = 'scientificNameID' in parsed[0]
+            name_matches = None
+            
+            if not has_scientific_name_id:
+                # Extract unique scientific names and match them with WoRMS
+                unique_names = sorted(set(
+                    row.get('scientificName', '').strip() 
+                    for row in filtered_parsed 
+                    if row.get('scientificName', '').strip()
+                ))
+                if unique_names:
+                    logger.info(f"Matching {len(unique_names)} unique scientific names with WoRMS")
+                    name_matches = match_names_with_worms(unique_names)
+                    result['name_matching_performed'] = True
+                    result['name_matching_count'] = len(name_matches)
+                    result['name_matching_total'] = len(unique_names)
+                    result['name_matching_message'] = (
+                        f"Name matching performed: {len(name_matches)} out of {len(unique_names)} "
+                        f"scientific names were matched with WoRMS (exact matches only) due to missing scientificNameID column."
+                    )
+                else:
+                    result['name_matching_performed'] = False
+                    result['name_matching_message'] = None
+            else:
+                result['name_matching_performed'] = False
+                result['name_matching_message'] = None
+            
+            occurrences = extract_species_occurrences(filtered_parsed, name_matches)
+            
+            # Only normalize AphiaIDs if we didn't do name matching (name matching already provides valid IDs)
+            if has_scientific_name_id:
+                normalize_aphiaids(occurrences)
+            
+            # If taxonRank was missing initially, filter by rank from API response before further processing
+            if not has_taxon_rank:
+                occurrences_before_rank_filter = len(occurrences)
+                occurrences = [
+                    occ for occ in occurrences 
+                    if occ.get('rank', '').lower() == 'species'
+                ]
+                result['rank_filtered_count'] = len(occurrences)
+                result['rank_filtered_removed'] = occurrences_before_rank_filter - len(occurrences)
+                logger.info(f"Filtered by rank: {len(occurrences)} species out of {occurrences_before_rank_filter} occurrences")
+            
             result['original_occurrence_count'] = len(filtered_parsed)
             result['unique_occurrence_count'] = len(occurrences)
             analyzed_occurrences = analyze_species_occurrences(occurrences)
