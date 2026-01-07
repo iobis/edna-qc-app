@@ -6,7 +6,7 @@ import { interpolateSpectral } from 'd3-scale-chromatic';
 // Empty string means use relative URLs (works with nginx proxy)
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv'];
+const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip'];
 
 const getBadgeStyle = (value, colorScale) => {
   const numValue = parseFloat(value) || 0;
@@ -260,7 +260,7 @@ function App() {
       <div className="row">
         <div className="col-md-12">
           <h1 className="mb-2">Geographic outlier detection</h1>
-          <p>This app performs spatial and environmental outlier detection on species occurrence data. Upload Darwin Core text separated data files, or point to a Darwin Core Archive online. Datasets should include WoRMS LSIDs in the scientificNameID column. For a typical dataset, the analysis should finish within one minute. Click on the <a
+          <p>This app performs spatial and environmental outlier detection on species occurrence data. Upload Darwin Core text separated data files or zip files, or point to a Darwin Core Archive online. Datasets should include WoRMS LSIDs in the scientificNameID column. For a typical dataset, the analysis should finish within one minute. Click on the <a
                   href="#"
                   onClick={(e) => {
                     e.preventDefault();
@@ -284,7 +284,7 @@ function App() {
                 type="file"
                 className="form-control"
                 multiple
-                accept=".txt,.csv,.tsv"
+                accept=".txt,.csv,.tsv,.zip"
                 onChange={handleFileChange}
                 disabled={loading}
               />
