@@ -19,7 +19,7 @@ def find_occurrence_file(filenames: List[str]) -> Optional[str]:
     Find a file matching occurrence pattern (case-insensitive).
     Patterns: occurrence.*, Occurrence.*, occ.*
     """
-    pattern = re.compile(r'^(occurrence|Occurrence|occ).*$', re.IGNORECASE)
+    pattern = re.compile(r'.*occ.*(txt|csv|tsv)', re.IGNORECASE)
     for filename in filenames:
         print(f"Found occurrence file: {filename}")
         if pattern.match(filename):
