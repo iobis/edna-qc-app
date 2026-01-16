@@ -394,7 +394,7 @@ function App() {
                           <th>Species</th>
                           <th>Phylum</th>
                           <th>Class</th>
-                          <th>AphaID</th>
+                          <th>AphiaID</th>
                           <th>Coordinates</th>
                           <th>Density</th>
                           <th>Suitability</th>
