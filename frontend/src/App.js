@@ -203,9 +203,9 @@ function App() {
             footprintWKT: occurrence?.footprintWKT || null,
             density: occurrence?.density || null,
             suitability: occurrence?.suitability || null,
-            annotation: annotationValue,
-            alternative: alternative,
-            comments: comments,
+            annotation: annotationValue || null,
+            alternative: alternative || null,
+            comments: comments || null,
           };
         })
         .filter(item => item !== null) // Remove annotations that don't match current dataset or don't have accept/reject
@@ -232,6 +232,111 @@ function App() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Failed to download annotations', e);
+    }
+  };
+
+  const handleDownloadAnnotationsOldFormat = () => {
+    try {
+      if (!uploadResult?.processing?.analyzed_occurrences) {
+        return;
+      }
+
+      const occurrenceMap = {};
+      uploadResult.processing.analyzed_occurrences.forEach((occ) => {
+        const key = getAnnotationKey(occ);
+        occurrenceMap[key] = occ;
+      });
+
+      const annotationsList = Object.entries(annotations)
+        .map(([key, annotationData]) => {
+          const [aphiaidStr, lonStr, latStr] = key.split('|');
+          const aphiaid = aphiaidStr !== 'na' ? parseInt(aphiaidStr, 10) : null;
+          const lon = lonStr !== 'na' ? parseFloat(lonStr) : null;
+          const lat = latStr !== 'na' ? parseFloat(latStr) : null;
+
+          const occurrence = occurrenceMap[key] || null;
+
+          // Only include annotations that match occurrences in the current dataset
+          if (!occurrence) {
+            return null;
+          }
+
+          // Handle both old format (string) and new format (object)
+          const annotationValue = typeof annotationData === 'string' 
+            ? annotationData 
+            : annotationData?.annotation || '';
+          
+          // Only include annotations with "accept" or "reject"
+          if (annotationValue !== 'accept' && annotationValue !== 'reject') {
+            return null;
+          }
+
+          const alternative = typeof annotationData === 'object' 
+            ? (annotationData?.alternative || '') 
+            : '';
+          const comments = typeof annotationData === 'object' 
+            ? (annotationData?.comments || '') 
+            : '';
+
+          // Convert alternative to integer if it's a valid number
+          let newAphiaID = null;
+          if (alternative) {
+            const parsed = parseInt(alternative, 10);
+            if (!isNaN(parsed)) {
+              newAphiaID = parsed;
+            }
+          }
+
+          const result = {
+            scientificName: occurrence?.scientificName || null,
+            scientificNameID: occurrence?.scientificNameID || null,
+            phylum: occurrence?.phylum || null,
+            class: occurrence?.class || null,
+            decimalLongitude: lon,
+            decimalLatitude: lat,
+            footprintWKT: occurrence?.footprintWKT || null,
+            density: occurrence?.density || null,
+            suitability: occurrence?.suitability || null,
+            annotation: annotationValue || null,
+            AphiaID: aphiaid, // Use existing aphiaid field (renamed to AphiaID)
+            new_AphiaID: newAphiaID, // Convert alternative to integer
+            comments: comments || null,
+          };
+
+          // Add remove field based on annotation value
+          if (annotationValue === 'reject') {
+            // If reject and there is an alternative, remove should be false
+            // If reject and there is no alternative, remove should be true (or not set, depending on requirement)
+            result.remove = alternative ? false : true;
+          }
+          // If accept, don't add remove field
+
+          return result;
+        })
+        .filter(item => item !== null) // Remove annotations that don't match current dataset or don't have accept/reject
+        .sort((a, b) => {
+          // Sort by aphiaid, then by coordinates
+          if (a.aphiaid !== b.aphiaid) {
+            return (a.aphiaid || 0) - (b.aphiaid || 0);
+          }
+          if (a.decimalLongitude !== b.decimalLongitude) {
+            return (a.decimalLongitude || 0) - (b.decimalLongitude || 0);
+          }
+          return (a.decimalLatitude || 0) - (b.decimalLatitude || 0);
+        });
+
+      const dataStr = JSON.stringify(annotationsList, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'annotations_old_format.json';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Failed to download annotations (old format)', e);
     }
   };
 
@@ -434,6 +539,14 @@ function App() {
                         disabled={Object.keys(annotations).length === 0}
                       >
                         Download annotations
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline-success btn-sm me-2"
+                        onClick={handleDownloadAnnotationsOldFormat}
+                        disabled={Object.keys(annotations).length === 0}
+                      >
+                        Download annotations (old format)
                       </button>
                       <button
                         type="button"
