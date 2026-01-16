@@ -160,6 +160,14 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
         key = (scientific_name, scientific_name_id, lon, lat)
         
         if key not in unique_occurrences:
+            footprint_wkt = None
+            if lon is not None and lat is not None:
+                min_lon = round(lon - 0.05, 1)
+                max_lon = round(lon + 0.05, 1)
+                min_lat = round(lat - 0.05, 1)
+                max_lat = round(lat + 0.05, 1)
+                footprint_wkt = f"POLYGON(({min_lon} {min_lat}, {max_lon} {min_lat}, {max_lon} {max_lat}, {min_lon} {max_lat}, {min_lon} {min_lat}))"
+            
             unique_occurrences[key] = {
                 'scientificName': scientific_name,
                 'scientificNameID': scientific_name_id,
@@ -168,6 +176,7 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
                 'decimalLongitude': lon,
                 'decimalLatitude': lat,
                 'aphiaid': aphiaid,
+                'footprintWKT': footprint_wkt,
             }
             if rank:
                 unique_occurrences[key]['rank'] = rank

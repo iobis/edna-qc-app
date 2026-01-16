@@ -73,7 +73,22 @@ function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object') {
-          setAnnotations(parsed);
+          // Migrate old format (string values) to new format (object values)
+          const migrated = {};
+          for (const [key, value] of Object.entries(parsed)) {
+            if (typeof value === 'string') {
+              // Old format: just annotation string
+              migrated[key] = { annotation: value, alternative: '', comments: '' };
+            } else {
+              // New format: object with annotation, alternative, comments
+              migrated[key] = {
+                annotation: value?.annotation || '',
+                alternative: value?.alternative || '',
+                comments: value?.comments || ''
+              };
+            }
+          }
+          setAnnotations(migrated);
         }
       }
       setAnnotationsLoaded(true);
@@ -97,13 +112,29 @@ function App() {
     }
   }, [annotations]);
 
-  const handleAnnotationChange = (key, value) => {
+  const handleAnnotationChange = (key, field, value) => {
     setAnnotations((prev) => {
       const next = { ...prev };
-      if (!value) {
-        delete next[key];
+      const current = next[key] || { annotation: '', alternative: '', comments: '' };
+      
+      if (field === 'annotation') {
+        if (!value) {
+          // If annotation is cleared and all fields are empty, remove the entry
+          if (!current.alternative && !current.comments) {
+            delete next[key];
+          } else {
+            next[key] = { ...current, annotation: '' };
+          }
+        } else {
+          next[key] = { ...current, annotation: value };
+        }
       } else {
-        next[key] = value;
+        // For alternative or comments
+        next[key] = { ...current, [field]: value || '' };
+        // If all fields are empty, remove the entry
+        if (!next[key].annotation && !next[key].alternative && !next[key].comments) {
+          delete next[key];
+        }
       }
       return next;
     });
@@ -131,7 +162,7 @@ function App() {
       });
 
       const annotationsList = Object.entries(annotations)
-        .map(([key, annotationValue]) => {
+        .map(([key, annotationData]) => {
           const [aphiaidStr, lonStr, latStr] = key.split('|');
           const aphiaid = aphiaidStr !== 'na' ? parseInt(aphiaidStr, 10) : null;
           const lon = lonStr !== 'na' ? parseFloat(lonStr) : null;
@@ -144,6 +175,23 @@ function App() {
             return null;
           }
 
+          // Handle both old format (string) and new format (object)
+          const annotationValue = typeof annotationData === 'string' 
+            ? annotationData 
+            : annotationData?.annotation || '';
+          
+          // Only include annotations with "accept" or "reject"
+          if (annotationValue !== 'accept' && annotationValue !== 'reject') {
+            return null;
+          }
+
+          const alternative = typeof annotationData === 'object' 
+            ? (annotationData?.alternative || '') 
+            : '';
+          const comments = typeof annotationData === 'object' 
+            ? (annotationData?.comments || '') 
+            : '';
+
           return {
             aphiaid: aphiaid,
             scientificName: occurrence?.scientificName || null,
@@ -152,12 +200,15 @@ function App() {
             class: occurrence?.class || null,
             decimalLongitude: lon,
             decimalLatitude: lat,
+            footprintWKT: occurrence?.footprintWKT || null,
             density: occurrence?.density || null,
             suitability: occurrence?.suitability || null,
             annotation: annotationValue,
+            alternative: alternative,
+            comments: comments,
           };
         })
-        .filter(item => item !== null) // Remove annotations that don't match current dataset
+        .filter(item => item !== null) // Remove annotations that don't match current dataset or don't have accept/reject
         .sort((a, b) => {
           // Sort by aphiaid, then by coordinates
           if (a.aphiaid !== b.aphiaid) {
@@ -264,6 +315,12 @@ function App() {
           background-color: #dff5eb;
           padding: 2px 6px;
           border-radius: 4px;
+        }
+        a {
+          text-decoration: none;
+        }
+        a:hover {
+          text-decoration: underline;
         }
       `}</style>
       <div className="row">
@@ -399,6 +456,8 @@ function App() {
                           <th>Density</th>
                           <th>Suitability</th>
                           <th>Annotation</th>
+                          <th>Alternative</th>
+                          <th>Comments</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -411,7 +470,16 @@ function App() {
                           })
                           .map((occurrence, index) => {
                             const rowKey = getAnnotationKey(occurrence);
-                            const annotationValue = annotations[rowKey] || '';
+                            const annotationData = annotations[rowKey] || { annotation: '', alternative: '', comments: '' };
+                            const annotationValue = typeof annotationData === 'string' 
+                              ? annotationData 
+                              : annotationData.annotation || '';
+                            const alternativeValue = typeof annotationData === 'object' 
+                              ? (annotationData.alternative || '') 
+                              : '';
+                            const commentsValue = typeof annotationData === 'object' 
+                              ? (annotationData.comments || '') 
+                              : '';
                             return (
                           <tr key={index}>
                             <td>
@@ -483,13 +551,35 @@ function App() {
                                 className="form-select form-select-sm"
                                 value={annotationValue}
                                 onChange={(e) =>
-                                  handleAnnotationChange(rowKey, e.target.value)
+                                  handleAnnotationChange(rowKey, 'annotation', e.target.value)
                                 }
                               >
                                 <option value="">-</option>
                                 <option value="accept">Accept</option>
                                 <option value="reject">Reject</option>
                               </select>
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={alternativeValue}
+                                onChange={(e) =>
+                                  handleAnnotationChange(rowKey, 'alternative', e.target.value)
+                                }
+                                placeholder=""
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={commentsValue}
+                                onChange={(e) =>
+                                  handleAnnotationChange(rowKey, 'comments', e.target.value)
+                                }
+                                placeholder=""
+                              />
                             </td>
                           </tr>
                         );})}
