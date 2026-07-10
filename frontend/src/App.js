@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
+import './App.css';
 
 // Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
 // Empty string means use relative URLs (works with nginx proxy)
@@ -36,20 +37,20 @@ const getBadgeStyle = (value, colorScale) => {
   }
   
   return {
-    backgroundColor: backgroundColor,
-    color: '#000000',
-    padding: '4px 8px',
-    borderRadius: '12px',
-    fontSize: '0.875rem',
+    backgroundColor,
+    color: '#1a1d21',
+    padding: '0.2rem 0.5rem',
+    borderRadius: '6px',
+    fontSize: '0.75rem',
     fontWeight: '500',
     display: 'inline-block',
-    minWidth: '40px',
-    textAlign: 'center'
+    minWidth: '3rem',
+    textAlign: 'center',
+    fontVariantNumeric: 'tabular-nums',
   };
 };
 
 function App() {
-  const [status, setStatus] = useState('loading');
   const [files, setFiles] = useState([]);
   const [url, setUrl] = useState('');
   const [uploadResult, setUploadResult] = useState(null);
@@ -276,175 +277,151 @@ function App() {
     }
   };
 
+  const loadExample = () => {
+    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
+    setFiles([]);
+    const fileInput = document.getElementById('fileUpload');
+    if (fileInput) {
+      fileInput.value = '';
+    }
+    setUploadResult(null);
+    setUploadError(null);
+  };
+
   return (
-    <div className="container mt-5">
-      <style>{`
-        .dwca-term {
-          font-family: monospace;
-          color: var(--bs-body-color);
-          background-color: #dff5eb;
-          padding: 2px 6px;
-          border-radius: 4px;
-        }
-        a {
-          text-decoration: none;
-        }
-        a:hover {
-          text-decoration: underline;
-        }
-      `}</style>
-      <div className="row">
-        <div className="col-md-12">
-          <h1 className="mb-2">Geographic outlier detection</h1>
-          <p>
-            This app performs spatial and environmental outlier detection on species occurrence data.
-            Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
-            Datasets should always include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
-            If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
-            Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
-            For a typical dataset, the analysis should finish within one minute.
-            Click on the <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
-                  }}
-                  className="text-decoration-none"
-                >
-                  (example)
-                </a> link to load an example dataset.</p>
-        </div>
+    <div className="app">
+      <header className="header">
+        <h1>Geographic outlier detection</h1>
+        <p>
+          This app performs spatial and environmental outlier detection on species occurrence data.
+          Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
+          Datasets should always include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
+          If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
+          Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
+          For a typical dataset, the analysis should finish within one minute.
+          Click the{' '}
+          <button type="button" onClick={loadExample} className="example-link">
+            example
+          </button>{' '}
+          to load a sample dataset.
+        </p>
+      </header>
+
+      <div className="card">
+        <form onSubmit={handleUpload}>
+          <div className="form-group">
+            <label htmlFor="fileUpload" className="form-label">
+              Upload files
+            </label>
+            <input
+              id="fileUpload"
+              type="file"
+              className="form-input"
+              multiple
+              accept=".txt,.csv,.tsv,.zip"
+              onChange={handleFileChange}
+              disabled={loading}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="urlInput" className="form-label">
+              Or provide a URL to a zip file{' '}
+              <button type="button" onClick={loadExample} className="example-link">
+                (example)
+              </button>
+            </label>
+            <input
+              id="urlInput"
+              type="url"
+              className="form-input"
+              value={url}
+              onChange={handleUrlChange}
+              disabled={loading}
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={(!files.length && !url.trim()) || loading}
+          >
+            {loading ? 'Analyzing…' : 'Upload'}
+          </button>
+        </form>
+
+        {loading && (
+          <div className="loading">
+            <div className="spinner" role="status" aria-label="Loading" />
+            <span>Running analysis…</span>
+          </div>
+        )}
+
+        {uploadError && (
+          <div className="alert alert-danger">
+            {uploadError}
+          </div>
+        )}
       </div>
-      <div className="row mt-3">
-        <div className="col-md-12">
-          <form onSubmit={handleUpload}>
-            <div className="mb-3">
-              <label htmlFor="fileUpload" className="form-label">
-                Upload files
-              </label>
-              <input
-                id="fileUpload"
-                type="file"
-                className="form-control"
-                multiple
-                accept=".txt,.csv,.tsv,.zip"
-                onChange={handleFileChange}
-                disabled={loading}
-              />
-            </div>
-            <div className="mb-3">
-              <label htmlFor="urlInput" className="form-label">
-                Or provide a URL to a zip file{' '}
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
-                    setFiles([]);
-                    // Clear the file input element
-                    const fileInput = document.getElementById('fileUpload');
-                    if (fileInput) {
-                      fileInput.value = '';
-                    }
-                    setUploadResult(null);
-                    setUploadError(null);
-                  }}
-                  className="text-decoration-none"
-                >
-                  (example)
-                </a>
-              </label>
-              <input
-                id="urlInput"
-                type="url"
-                className="form-control"
-                placeholder=""
-                value={url}
-                onChange={handleUrlChange}
-                disabled={loading}
-              />
-            </div>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={(!files.length && !url.trim()) || loading}
-            >
-              {loading ? 'Analyzing...' : 'Upload'}
-            </button>
-          </form>
-          {loading && (
-            <div className="mt-3">
-              <div className="spinner-border text-primary me-2" role="status">
-                <span className="visually-hidden">Loading...</span>
-              </div>
-              <span>Running analysis...</span>
+
+      {uploadResult && (
+        <>
+          {uploadResult.processing?.analysis_error && (
+            <div className="alert alert-warning">
+              {uploadResult.processing.analysis_error}
             </div>
           )}
-          {uploadError && (
-            <div className="alert alert-danger mt-3">
-              {uploadError}
-            </div>
-          )}
-          {uploadResult && (
-            <div className="mt-4">
-              {uploadResult.processing?.analysis_error && (
-                <div className="alert alert-warning">
-                  {uploadResult.processing.analysis_error}
+          {uploadResult.processing?.analyzed_occurrences && (
+            <section className="results">
+              <div className="results-header">
+                <h2>Analysis results</h2>
+                <div className="btn-group">
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={handleDownloadAnnotations}
+                    disabled={Object.keys(annotations).length === 0}
+                  >
+                    Download annotations
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-outline-danger btn-sm"
+                    onClick={handleClearAnnotations}
+                  >
+                    Clear annotations
+                  </button>
                 </div>
-              )}
-              {uploadResult.processing?.analyzed_occurrences && (
-                <div className="mt-5">
-                  <div className="d-flex justify-content-between align-items-center mb-2">
-                    <h5 className="mb-0">Analysis Results</h5>
-                    <div>
-                      <button
-                        type="button"
-                        className="btn btn-outline-primary btn-sm me-2"
-                        onClick={handleDownloadAnnotations}
-                        disabled={Object.keys(annotations).length === 0}
-                      >
-                        Download annotations
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-outline-danger btn-sm"
-                        onClick={handleClearAnnotations}
-                      >
-                        Clear annotations
-                      </button>
-                    </div>
-                  </div>
-                  <div className="table-responsive">
-                    <table className="table table-striped">
-                      <thead className="">
-                        <tr>
-                          <th>Species</th>
-                          <th>Phylum</th>
-                          <th>Class</th>
-                          <th>AphiaID</th>
-                          <th>Coordinates</th>
-                          <th>Density</th>
-                          <th>Suitability</th>
-                          <th>Annotation</th>
-                          <th>Comments</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {uploadResult.processing.analyzed_occurrences
-                          .slice()
-                          .sort((a, b) => {
-                            const da = a.density ?? Infinity;
-                            const db = b.density ?? Infinity;
-                            return da - db;
-                          })
-                          .map((occurrence, index) => {
-                            const rowKey = getAnnotationKey(occurrence);
-                            const annotationData = annotations[rowKey] || { annotation: '', comments: '' };
-                            const annotationValue = annotationData.annotation || '';
-                            const commentsValue = annotationData.comments || '';
-                            return (
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Species</th>
+                      <th>Phylum</th>
+                      <th>Class</th>
+                      <th>AphiaID</th>
+                      <th>Coordinates</th>
+                      <th>Density</th>
+                      <th>Suitability</th>
+                      <th>Annotation</th>
+                      <th>Comments</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uploadResult.processing.analyzed_occurrences
+                      .slice()
+                      .sort((a, b) => {
+                        const da = a.density ?? Infinity;
+                        const db = b.density ?? Infinity;
+                        return da - db;
+                      })
+                      .map((occurrence, index) => {
+                        const rowKey = getAnnotationKey(occurrence);
+                        const annotationData = annotations[rowKey] || { annotation: '', comments: '' };
+                        const annotationValue = annotationData.annotation || '';
+                        const commentsValue = annotationData.comments || '';
+                        return (
                           <tr key={index}>
-                            <td>
+                            <td className="species">
                               {occurrence.aphiaid ? (
                                 <a
                                   href={`https://obis.org/taxon/${occurrence.aphiaid}`}
@@ -454,11 +431,11 @@ function App() {
                                   {occurrence.scientificName || occurrence.aphiaid}
                                 </a>
                               ) : (
-                                occurrence.scientificName || '-'
+                                occurrence.scientificName || <span className="empty-cell">—</span>
                               )}
                             </td>
-                            <td>{occurrence.phylum || '-'}</td>
-                            <td>{occurrence.class || '-'}</td>
+                            <td>{occurrence.phylum || <span className="empty-cell">—</span>}</td>
+                            <td>{occurrence.class || <span className="empty-cell">—</span>}</td>
                             <td>
                               {occurrence.aphiaid ? (
                                 <a
@@ -469,14 +446,11 @@ function App() {
                                   {occurrence.aphiaid}
                                 </a>
                               ) : (
-                                '-'
+                                <span className="empty-cell">—</span>
                               )}
                             </td>
                             <td>
-                              {occurrence.decimalLongitude !== null &&
-                              occurrence.decimalLongitude !== undefined &&
-                              occurrence.decimalLatitude !== null &&
-                              occurrence.decimalLatitude !== undefined ? (
+                              {occurrence.decimalLongitude != null && occurrence.decimalLatitude != null ? (
                                 <a
                                   href={`https://wktmap.com/?wkt=${encodeURIComponent(
                                     `POINT (${occurrence.decimalLongitude} ${occurrence.decimalLatitude})`
@@ -487,25 +461,25 @@ function App() {
                                   {`${occurrence.decimalLongitude}, ${occurrence.decimalLatitude}`}
                                 </a>
                               ) : (
-                                '-'
+                                <span className="empty-cell">—</span>
                               )}
                             </td>
                             <td>
-                              {occurrence.density !== null && occurrence.density !== undefined ? (
-                                <span style={getBadgeStyle(occurrence.density, interpolateSpectral)}>
+                              {occurrence.density != null ? (
+                                <span className="badge" style={getBadgeStyle(occurrence.density, interpolateSpectral)}>
                                   {Number(occurrence.density).toFixed(4)}
                                 </span>
                               ) : (
-                                '-'
+                                <span className="empty-cell">—</span>
                               )}
                             </td>
                             <td>
-                              {occurrence.suitability !== null && occurrence.suitability !== undefined ? (
-                                <span style={getBadgeStyle(occurrence.suitability, interpolateSpectral)}>
+                              {occurrence.suitability != null ? (
+                                <span className="badge" style={getBadgeStyle(occurrence.suitability, interpolateSpectral)}>
                                   {Number(occurrence.suitability).toFixed(4)}
                                 </span>
                               ) : (
-                                '-'
+                                <span className="empty-cell">—</span>
                               )}
                             </td>
                             <td>
@@ -516,7 +490,7 @@ function App() {
                                   handleAnnotationChange(rowKey, 'annotation', e.target.value)
                                 }
                               >
-                                <option value="">-</option>
+                                <option value="">—</option>
                                 <option value="accept">Accept</option>
                                 <option value="reject">Reject</option>
                               </select>
@@ -524,25 +498,23 @@ function App() {
                             <td>
                               <input
                                 type="text"
-                                className="form-control form-control-sm"
+                                className="form-input form-input-sm"
                                 value={commentsValue}
                                 onChange={(e) =>
                                   handleAnnotationChange(rowKey, 'comments', e.target.value)
                                 }
-                                placeholder=""
                               />
                             </td>
                           </tr>
-                        );})}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
