@@ -35,18 +35,17 @@ const BASE_STYLE = {
   ],
 };
 
-// Low density fades out; high density shifts warm red.
+// Soft warm ramp: fades in at low density, muted coral at high.
 const DENSITY_FILL_COLOR = [
   'interpolate',
   ['linear'],
   ['coalesce', ['get', 'density'], 0],
-  0, '#fde0dd',
-  0.15, '#fcbba1',
-  0.35, '#fc9272',
-  0.55, '#fb6a4a',
-  0.75, '#de2d26',
-  0.9, '#a50f15',
-  1, '#67000d',
+  0, '#fff5f0',
+  0.2, '#fde6d8',
+  0.4, '#f8cdb8',
+  0.6, '#efab8a',
+  0.8, '#e08b6d',
+  1, '#c96f55',
 ];
 
 const DENSITY_FILL_OPACITY = [
@@ -54,11 +53,11 @@ const DENSITY_FILL_OPACITY = [
   ['linear'],
   ['coalesce', ['get', 'density'], 0],
   0, 0,
-  0.05, 0.12,
-  0.2, 0.45,
-  0.5, 0.68,
-  0.75, 0.82,
-  1, 0.92,
+  0.08, 0.18,
+  0.3, 0.42,
+  0.6, 0.58,
+  0.85, 0.68,
+  1, 0.72,
 ];
 
 function coordsFromGeometry(geometry) {
@@ -126,8 +125,8 @@ function DensityMap({ geojson, aphiaid, lon, lat }) {
             ['linear'],
             ['coalesce', ['get', 'density'], 0],
             0, 'rgba(255, 255, 255, 0)',
-            0.5, 'rgba(255, 255, 255, 0.15)',
-            1, 'rgba(127, 0, 0, 0.35)',
+            0.5, 'rgba(255, 255, 255, 0.12)',
+            1, 'rgba(201, 111, 85, 0.25)',
           ],
           'line-width': 0.4,
         },

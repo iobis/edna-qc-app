@@ -414,12 +414,12 @@ td.species {
   border-radius: 4px;
   background: linear-gradient(
     to right,
-    rgba(253, 224, 221, 0.15) 0%,
-    #fcbba1 20%,
-    #fc9272 40%,
-    #fb6a4a 55%,
-    #de2d26 75%,
-    #67000d 100%
+    rgba(255, 245, 240, 0.15) 0%,
+    #fde6d8 25%,
+    #f8cdb8 45%,
+    #efab8a 65%,
+    #e08b6d 85%,
+    #c96f55 100%
   );
   border: 1px solid var(--border);
 }
