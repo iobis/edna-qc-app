@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
+import DensityMap from './DensityMap';
 import './App.css';
 
 // Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
 // Empty string means use relative URLs (works with nginx proxy)
 const API_URL = process.env.REACT_APP_API_URL || '';
+const MAP_GEOMETRY_VERSION = 2;
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip'];
 
@@ -58,6 +60,12 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [annotations, setAnnotations] = useState({});
   const [annotationsLoaded, setAnnotationsLoaded] = useState(false);
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [mapCache, setMapCache] = useState({});
+  const [mapLoading, setMapLoading] = useState(null);
+  const [mapErrors, setMapErrors] = useState({});
+
+  const COLUMN_COUNT = 10;
 
   const ANNOTATIONS_STORAGE_KEY = 'occurrenceAnnotations';
 
@@ -227,6 +235,7 @@ function App() {
     setUrl('');
     setUploadResult(null);
     setUploadError(null);
+    setExpandedRow(null);
   };
 
   const handleUrlChange = (event) => {
@@ -239,6 +248,7 @@ function App() {
     }
     setUploadResult(null);
     setUploadError(null);
+    setExpandedRow(null);
   };
 
   const handleUpload = async (event) => {
@@ -249,7 +259,8 @@ function App() {
 
     setLoading(true);
     setUploadResult(null);
-    setUploadError(null); // Clear errors when starting a new analysis
+    setUploadError(null);
+    setExpandedRow(null);
 
     const formData = new FormData();
     if (files.length > 0) {
@@ -286,6 +297,46 @@ function App() {
     }
     setUploadResult(null);
     setUploadError(null);
+    setExpandedRow(null);
+  };
+
+  const toggleRowExpand = async (rowKey, occurrence) => {
+    if (expandedRow === rowKey) {
+      setExpandedRow(null);
+      return;
+    }
+
+    setExpandedRow(rowKey);
+
+    if (!occurrence.aphiaid || mapCache[occurrence.aphiaid]) {
+      return;
+    }
+
+    setMapLoading(rowKey);
+    try {
+      const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
+      if (occurrence.decimalLongitude != null) {
+        params.set('lon', occurrence.decimalLongitude);
+      }
+      if (occurrence.decimalLatitude != null) {
+        params.set('lat', occurrence.decimalLatitude);
+      }
+      const query = params.toString();
+      const response = await axios.get(
+        `${API_URL}/api/density-map/${occurrence.aphiaid}${query ? `?${query}` : ''}`
+      );
+      setMapCache((prev) => ({ ...prev, [occurrence.aphiaid]: response.data }));
+      setMapErrors((prev) => {
+        const next = { ...prev };
+        delete next[rowKey];
+        return next;
+      });
+    } catch (error) {
+      const message = error.response?.data?.detail || 'Failed to load density map';
+      setMapErrors((prev) => ({ ...prev, [rowKey]: message }));
+    } finally {
+      setMapLoading(null);
+    }
   };
 
   return (
@@ -395,6 +446,7 @@ function App() {
                 <table>
                   <thead>
                     <tr>
+                      <th className="col-toggle" aria-label="Expand" />
                       <th>Species</th>
                       <th>Phylum</th>
                       <th>Class</th>
@@ -414,13 +466,27 @@ function App() {
                         const db = b.density ?? Infinity;
                         return da - db;
                       })
-                      .map((occurrence, index) => {
+                      .map((occurrence) => {
                         const rowKey = getAnnotationKey(occurrence);
                         const annotationData = annotations[rowKey] || { annotation: '', comments: '' };
                         const annotationValue = annotationData.annotation || '';
                         const commentsValue = annotationData.comments || '';
+                        const isExpanded = expandedRow === rowKey;
+                        const cachedMap = occurrence.aphiaid ? mapCache[occurrence.aphiaid] : null;
                         return (
-                          <tr key={index}>
+                          <React.Fragment key={rowKey}>
+                            <tr className={isExpanded ? 'row-expanded' : undefined}>
+                              <td className="col-toggle">
+                                {occurrence.aphiaid ? (
+                                  <button
+                                    type="button"
+                                    className={`row-toggle${isExpanded ? ' row-toggle-open' : ''}`}
+                                    onClick={() => toggleRowExpand(rowKey, occurrence)}
+                                    aria-expanded={isExpanded}
+                                    aria-label={isExpanded ? 'Hide density map' : 'Show density map'}
+                                  />
+                                ) : null}
+                              </td>
                             <td className="species">
                               {occurrence.aphiaid ? (
                                 <a
@@ -506,6 +572,30 @@ function App() {
                               />
                             </td>
                           </tr>
+                          {isExpanded && (
+                            <tr className="expand-row">
+                              <td colSpan={COLUMN_COUNT}>
+                                {mapLoading === rowKey && (
+                                  <div className="density-map-loading">
+                                    <div className="spinner" role="status" aria-label="Loading map" />
+                                    <span>Loading density map…</span>
+                                  </div>
+                                )}
+                                {mapErrors[rowKey] && (
+                                  <div className="density-map-error">{mapErrors[rowKey]}</div>
+                                )}
+                                {cachedMap && mapLoading !== rowKey && !mapErrors[rowKey] && (
+                                  <DensityMap
+                                    geojson={cachedMap}
+                                    aphiaid={occurrence.aphiaid}
+                                    lon={occurrence.decimalLongitude}
+                                    lat={occurrence.decimalLatitude}
+                                  />
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         );
                       })}
                   </tbody>

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict
 import os
@@ -7,6 +7,7 @@ import requests
 import zipfile
 import io
 from parsing import process_uploaded_files
+from density_map import get_density_map_geojson
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +35,21 @@ app.add_middleware(
 @app.get("/")
 def read_root():
     return {"message": "Backend API is running"}
+
+
+@app.get("/api/density-map/{aphiaid}")
+def density_map(
+    aphiaid: int,
+    lon: Optional[float] = Query(default=None),
+    lat: Optional[float] = Query(default=None),
+):
+    try:
+        return get_density_map_geojson(aphiaid, lon=lon, lat=lat)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to load density map for {aphiaid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load density map: {e}")
 
 
 ALLOWED_TEXT_EXTENSIONS = {'.txt', '.csv', '.tsv'}

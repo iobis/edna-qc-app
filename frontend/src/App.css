@@ -311,10 +311,6 @@ td {
   vertical-align: middle;
 }
 
-tbody tr:hover {
-  background: rgba(26, 107, 92, 0.03);
-}
-
 td.species {
   font-weight: 500;
   max-width: 200px;
@@ -333,6 +329,126 @@ td.species {
 
 .empty-cell {
   color: #a0a8b0;
+}
+
+.col-toggle {
+  width: 2rem;
+  padding-left: 0.65rem;
+  padding-right: 0.35rem;
+}
+
+.row-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.row-toggle::before {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--text-muted);
+  margin-left: 2px;
+  transition: transform 0.15s;
+}
+
+.row-toggle:hover {
+  background: var(--bg);
+  border-color: #c8cdd4;
+}
+
+.row-toggle-open::before {
+  transform: rotate(90deg);
+}
+
+.row-expanded {
+  background: rgba(26, 107, 92, 0.04);
+}
+
+.expand-row td {
+  padding: 0;
+  border-top: none;
+  background: var(--bg);
+}
+
+.expand-row:hover {
+  background: var(--bg);
+}
+
+.density-map-panel {
+  padding: 1rem;
+}
+
+.density-map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.density-map-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+}
+
+.density-map-legend-bar {
+  display: inline-block;
+  width: 80px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    to right,
+    rgba(253, 224, 221, 0.15) 0%,
+    #fcbba1 20%,
+    #fc9272 40%,
+    #fb6a4a 55%,
+    #de2d26 75%,
+    #67000d 100%
+  );
+  border: 1px solid var(--border);
+}
+
+.density-map {
+  width: 100%;
+  height: 360px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.density-map-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.density-map-error {
+  padding: 1rem;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+tbody tr:not(.expand-row):hover {
+  background: rgba(26, 107, 92, 0.03);
 }
 
 @media (max-width: 640px) {
