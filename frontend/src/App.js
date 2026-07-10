@@ -73,22 +73,7 @@ function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object') {
-          // Migrate old format (string values) to new format (object values)
-          const migrated = {};
-          for (const [key, value] of Object.entries(parsed)) {
-            if (typeof value === 'string') {
-              // Old format: just annotation string
-              migrated[key] = { annotation: value, alternative: '', comments: '' };
-            } else {
-              // New format: object with annotation, alternative, comments
-              migrated[key] = {
-                annotation: value?.annotation || '',
-                alternative: value?.alternative || '',
-                comments: value?.comments || ''
-              };
-            }
-          }
-          setAnnotations(migrated);
+          setAnnotations(parsed);
         }
       }
       setAnnotationsLoaded(true);
@@ -115,12 +100,11 @@ function App() {
   const handleAnnotationChange = (key, field, value) => {
     setAnnotations((prev) => {
       const next = { ...prev };
-      const current = next[key] || { annotation: '', alternative: '', comments: '' };
-      
+      const current = next[key] || { annotation: '', comments: '' };
+
       if (field === 'annotation') {
         if (!value) {
-          // If annotation is cleared and all fields are empty, remove the entry
-          if (!current.alternative && !current.comments) {
+          if (!current.comments) {
             delete next[key];
           } else {
             next[key] = { ...current, annotation: '' };
@@ -129,10 +113,8 @@ function App() {
           next[key] = { ...current, annotation: value };
         }
       } else {
-        // For alternative or comments
         next[key] = { ...current, [field]: value || '' };
-        // If all fields are empty, remove the entry
-        if (!next[key].annotation && !next[key].alternative && !next[key].comments) {
+        if (!next[key].annotation && !next[key].comments) {
           delete next[key];
         }
       }
@@ -175,22 +157,11 @@ function App() {
             return null;
           }
 
-          // Handle both old format (string) and new format (object)
-          const annotationValue = typeof annotationData === 'string' 
-            ? annotationData 
-            : annotationData?.annotation || '';
-          
-          // Only include annotations with "accept" or "reject"
+          const annotationValue = annotationData?.annotation || '';
+
           if (annotationValue !== 'accept' && annotationValue !== 'reject') {
             return null;
           }
-
-          const alternative = typeof annotationData === 'object' 
-            ? (annotationData?.alternative || '') 
-            : '';
-          const comments = typeof annotationData === 'object' 
-            ? (annotationData?.comments || '') 
-            : '';
 
           return {
             aphiaid: aphiaid,
@@ -204,8 +175,7 @@ function App() {
             density: occurrence?.density || null,
             suitability: occurrence?.suitability || null,
             annotation: annotationValue || null,
-            alternative: alternative || null,
-            comments: comments || null,
+            comments: annotationData?.comments || null,
           };
         })
         .filter(item => item !== null) // Remove annotations that don't match current dataset or don't have accept/reject
@@ -232,111 +202,6 @@ function App() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Failed to download annotations', e);
-    }
-  };
-
-  const handleDownloadAnnotationsOldFormat = () => {
-    try {
-      if (!uploadResult?.processing?.analyzed_occurrences) {
-        return;
-      }
-
-      const occurrenceMap = {};
-      uploadResult.processing.analyzed_occurrences.forEach((occ) => {
-        const key = getAnnotationKey(occ);
-        occurrenceMap[key] = occ;
-      });
-
-      const annotationsList = Object.entries(annotations)
-        .map(([key, annotationData]) => {
-          const [aphiaidStr, lonStr, latStr] = key.split('|');
-          const aphiaid = aphiaidStr !== 'na' ? parseInt(aphiaidStr, 10) : null;
-          const lon = lonStr !== 'na' ? parseFloat(lonStr) : null;
-          const lat = latStr !== 'na' ? parseFloat(latStr) : null;
-
-          const occurrence = occurrenceMap[key] || null;
-
-          // Only include annotations that match occurrences in the current dataset
-          if (!occurrence) {
-            return null;
-          }
-
-          // Handle both old format (string) and new format (object)
-          const annotationValue = typeof annotationData === 'string' 
-            ? annotationData 
-            : annotationData?.annotation || '';
-          
-          // Only include annotations with "accept" or "reject"
-          if (annotationValue !== 'accept' && annotationValue !== 'reject') {
-            return null;
-          }
-
-          const alternative = typeof annotationData === 'object' 
-            ? (annotationData?.alternative || '') 
-            : '';
-          const comments = typeof annotationData === 'object' 
-            ? (annotationData?.comments || '') 
-            : '';
-
-          // Convert alternative to integer if it's a valid number
-          let newAphiaID = null;
-          if (alternative) {
-            const parsed = parseInt(alternative, 10);
-            if (!isNaN(parsed)) {
-              newAphiaID = parsed;
-            }
-          }
-
-          const result = {
-            scientificName: occurrence?.scientificName || null,
-            scientificNameID: occurrence?.scientificNameID || null,
-            phylum: occurrence?.phylum || null,
-            class: occurrence?.class || null,
-            decimalLongitude: lon,
-            decimalLatitude: lat,
-            footprintWKT: occurrence?.footprintWKT || null,
-            density: occurrence?.density || null,
-            suitability: occurrence?.suitability || null,
-            annotation: annotationValue || null,
-            AphiaID: aphiaid, // Use existing aphiaid field (renamed to AphiaID)
-            new_AphiaID: newAphiaID, // Convert alternative to integer
-            comments: comments || null,
-          };
-
-          // Add remove field based on annotation value
-          if (annotationValue === 'reject') {
-            // If reject and there is an alternative, remove should be false
-            // If reject and there is no alternative, remove should be true (or not set, depending on requirement)
-            result.remove = alternative ? false : true;
-          }
-          // If accept, don't add remove field
-
-          return result;
-        })
-        .filter(item => item !== null) // Remove annotations that don't match current dataset or don't have accept/reject
-        .sort((a, b) => {
-          // Sort by aphiaid, then by coordinates
-          if (a.aphiaid !== b.aphiaid) {
-            return (a.aphiaid || 0) - (b.aphiaid || 0);
-          }
-          if (a.decimalLongitude !== b.decimalLongitude) {
-            return (a.decimalLongitude || 0) - (b.decimalLongitude || 0);
-          }
-          return (a.decimalLatitude || 0) - (b.decimalLatitude || 0);
-        });
-
-      const dataStr = JSON.stringify(annotationsList, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'annotations_old_format.json';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error('Failed to download annotations (old format)', e);
     }
   };
 
@@ -542,14 +407,6 @@ function App() {
                       </button>
                       <button
                         type="button"
-                        className="btn btn-outline-success btn-sm me-2"
-                        onClick={handleDownloadAnnotationsOldFormat}
-                        disabled={Object.keys(annotations).length === 0}
-                      >
-                        Download annotations (old format)
-                      </button>
-                      <button
-                        type="button"
                         className="btn btn-outline-danger btn-sm"
                         onClick={handleClearAnnotations}
                       >
@@ -569,7 +426,6 @@ function App() {
                           <th>Density</th>
                           <th>Suitability</th>
                           <th>Annotation</th>
-                          <th>Alternative</th>
                           <th>Comments</th>
                         </tr>
                       </thead>
@@ -583,16 +439,9 @@ function App() {
                           })
                           .map((occurrence, index) => {
                             const rowKey = getAnnotationKey(occurrence);
-                            const annotationData = annotations[rowKey] || { annotation: '', alternative: '', comments: '' };
-                            const annotationValue = typeof annotationData === 'string' 
-                              ? annotationData 
-                              : annotationData.annotation || '';
-                            const alternativeValue = typeof annotationData === 'object' 
-                              ? (annotationData.alternative || '') 
-                              : '';
-                            const commentsValue = typeof annotationData === 'object' 
-                              ? (annotationData.comments || '') 
-                              : '';
+                            const annotationData = annotations[rowKey] || { annotation: '', comments: '' };
+                            const annotationValue = annotationData.annotation || '';
+                            const commentsValue = annotationData.comments || '';
                             return (
                           <tr key={index}>
                             <td>
@@ -671,17 +520,6 @@ function App() {
                                 <option value="accept">Accept</option>
                                 <option value="reject">Reject</option>
                               </select>
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                className="form-control form-control-sm"
-                                value={alternativeValue}
-                                onChange={(e) =>
-                                  handleAnnotationChange(rowKey, 'alternative', e.target.value)
-                                }
-                                placeholder=""
-                              />
                             </td>
                             <td>
                               <input
