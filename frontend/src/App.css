@@ -314,6 +314,7 @@ td {
 td.species {
   font-weight: 500;
   max-width: 200px;
+  padding-left: 0.4rem;
 }
 
 .badge {
@@ -332,44 +333,41 @@ td.species {
 }
 
 .col-toggle {
-  width: 2rem;
-  padding-left: 0.65rem;
-  padding-right: 0.35rem;
+  width: 1.75rem;
+  padding: 0.6rem 0.25rem 0.6rem 0.85rem;
+  vertical-align: middle;
+  line-height: 1.2;
 }
 
 .row-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
+  margin: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  font: inherit;
+  line-height: 0;
+  vertical-align: middle;
+  transition: color 0.15s;
 }
 
-.row-toggle::before {
-  content: '';
+.row-toggle svg {
+  width: 1.25rem;
+  height: 1.25rem;
   display: block;
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--text-muted);
-  margin-left: 2px;
-  transition: transform 0.15s;
+  transform: translateY(0.5px);
 }
 
 .row-toggle:hover {
-  background: var(--bg);
-  border-color: #c8cdd4;
+  color: var(--text);
 }
 
-.row-toggle-open::before {
-  transform: rotate(90deg);
+.row-toggle-open {
+  color: var(--accent);
 }
 
 .row-expanded {
