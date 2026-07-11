@@ -1,19 +1,28 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional, Dict
-import os
+from fastapi.responses import JSONResponse
+from typing import List, Optional
 import logging
-import requests
 import zipfile
-import io
-from parsing import process_uploaded_files
+
+import requests
+
 from density_map import get_density_map_geojson
+from job_storage import save_job_input
+from job_store import (
+    create_job,
+    find_active_job_by_cache_key,
+    get_job,
+    init_db,
+    job_to_api_response,
+    prune_finished_jobs,
+)
 from result_cache import (
     compute_submission_hash,
     get_cached_response,
     prune_expired_cache,
-    store_cached_response,
 )
+from upload_processing import ALLOWED_EXTENSIONS, collect_upload_payload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Backend API")
 
-allowed_origins_str = os.environ.get("CORS_ALLOWED_ORIGINS", "")
+allowed_origins_str = __import__("os").environ.get("CORS_ALLOWED_ORIGINS", "")
 if allowed_origins_str:
     allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
 else:
@@ -36,6 +45,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
 
 
 @app.get("/")
@@ -58,181 +72,110 @@ def density_map(
         raise HTTPException(status_code=500, detail=f"Failed to load density map: {e}")
 
 
-ALLOWED_TEXT_EXTENSIONS = {'.txt', '.csv', '.tsv'}
-ALLOWED_EXTENSIONS = ALLOWED_TEXT_EXTENSIONS | {'.zip'}
-
-
-def extract_text_files_from_zip(zip_content: bytes, source_name: str = "zip file") -> List[Dict]:
-    """
-    Extract text files from a zip file content.
-    
-    Args:
-        zip_content: Bytes content of the zip file
-        source_name: Name of the source (for error messages)
-    
-    Returns:
-        List of dicts with 'filename' and 'content' keys for extracted text files
-    
-    Raises:
-        zipfile.BadZipFile: If the content is not a valid zip file
-    """
-    extracted_files = []
-    
-    with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_file:
-        for zip_info in zip_file.namelist():
-            filename = os.path.basename(zip_info)
-            ext = os.path.splitext(filename)[1].lower()
-            
-            if ext in ALLOWED_TEXT_EXTENSIONS:
-                content = zip_file.read(zip_info)
-                extracted_files.append({
-                    "filename": filename,
-                    "content": content
-                })
-            elif not zip_info.endswith('/'):
-                logger.info(f"Skipping non-text file in {source_name}: {zip_info}")
-    
-    return extracted_files
-
-
-@app.post("/api/upload")
-async def upload_files(
-    files: List[UploadFile] = File(default=[]),
-    url: Optional[str] = Form(default=None)
+async def _read_submission(
+    files: List[UploadFile],
+    url: Optional[str],
 ):
-    """
-    Accept multiple uploaded files (txt, csv, tsv, or zip) or a URL to a zip file.
-    Zip files are automatically extracted and their text files are processed.
-    Looks for occurrence files and parses them.
-    """
-    file_infos = []
-    invalid_files = []
-    files_data = []
-    
-    # Handle file uploads
-    if files:
-        for file in files:
-            filename = file.filename or ""
-            ext = os.path.splitext(filename)[1].lower()
-            
-            if ext not in ALLOWED_EXTENSIONS:
-                invalid_files.append(filename)
-                continue
-            
-            content = await file.read()
-            
-            # If it's a zip file, extract text files from it
-            if ext == '.zip':
-                try:
-                    extracted = extract_text_files_from_zip(content, filename)
-                    if not extracted:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Zip file '{filename}' contains no valid text files (.txt, .csv, .tsv)"
-                        )
-                    for extracted_file in extracted:
-                        file_infos.append({
-                            "filename": extracted_file["filename"],
-                            "content_type": "application/octet-stream",
-                            "size": len(extracted_file["content"]),
-                            "source_zip": filename
-                        })
-                        files_data.append(extracted_file)
-                except zipfile.BadZipFile:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"'{filename}' is not a valid zip file"
-                    )
-            else:
-                # Regular text file
-                file_infos.append({
-                    "filename": file.filename,
-                    "content_type": file.content_type,
-                    "size": len(content)
-                })
-                files_data.append({
-                    "filename": file.filename,
-                    "content": content
-                })
-    
-    # Handle URL to zip file
-    if url:
-        try:
-            logger.info(f"Downloading zip file from URL: {url}")
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            if not url.lower().endswith('.zip') and not response.headers.get('content-type', '').startswith('application/zip'):
-                raise HTTPException(
-                    status_code=400,
-                    detail="URL must point to a zip file"
-                )
-            
-            extracted = extract_text_files_from_zip(response.content, url)
-            if not extracted:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Zip file from URL contains no valid text files (.txt, .csv, .tsv)"
-                )
-            for extracted_file in extracted:
-                file_infos.append({
-                    "filename": extracted_file["filename"],
-                    "content_type": "application/octet-stream",
-                    "size": len(extracted_file["content"]),
-                    "source_url": url
-                })
-                files_data.append(extracted_file)
-        except requests.RequestException as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to download file from URL: {str(e)}"
-            )
-        except zipfile.BadZipFile:
-            raise HTTPException(
-                status_code=400,
-                detail="URL does not point to a valid zip file"
-            )
-    
+    file_items = []
+    for file in files:
+        filename = file.filename or ""
+        content = await file.read()
+        file_items.append((filename, content, file.content_type))
+
+    try:
+        file_infos, files_data, invalid_files = collect_upload_payload(file_items, url=url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="Invalid zip file") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to download file from URL: {exc}") from exc
+
     if not files_data:
         raise HTTPException(
             status_code=400,
-            detail="No valid files provided. Please upload files or provide a URL to a zip file."
+            detail="No valid files provided. Please upload files or provide a URL to a zip file.",
         )
-    
+
     if invalid_files:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file types. Only {', '.join(sorted(ALLOWED_EXTENSIONS))} files are allowed. Invalid files: {', '.join(invalid_files)}"
+            detail=(
+                f"Invalid file types. Only {', '.join(sorted(ALLOWED_EXTENSIONS))} files are allowed. "
+                f"Invalid files: {', '.join(invalid_files)}"
+            ),
         )
+
+    return file_infos, files_data
+
+
+@app.post("/api/jobs")
+async def create_analysis_job(
+    files: List[UploadFile] = File(default=[]),
+    url: Optional[str] = Form(default=None),
+):
+    file_infos, files_data = await _read_submission(files, url)
 
     cache_key = compute_submission_hash(files_data)
     cached_response = get_cached_response(cache_key)
     if cached_response is not None:
         logger.info("Serving cached processing result for submission %s", cache_key)
-        return cached_response
-    
-    try:
-        processing_result = process_uploaded_files(files_data)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error processing files: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error processing files: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error while processing files: {str(e)}"
+        return job_to_api_response(
+            {
+                "id": None,
+                "cache_key": cache_key,
+                "status": "completed",
+                "file_infos": file_infos,
+                "error": None,
+                "created_at": cached_response.get("cached_at"),
+                "started_at": cached_response.get("cached_at"),
+                "finished_at": cached_response.get("cached_at"),
+            },
+            result=cached_response,
         )
 
-    response = {
-        "files_received": len(file_infos),
-        "files": file_infos,
-        "processing": processing_result,
-        "cached": False,
-        "cache_key": cache_key,
-    }
-    store_cached_response(cache_key, response)
+    existing = find_active_job_by_cache_key(cache_key)
+    if existing is not None:
+        logger.info("Returning existing active job %s for cache key %s", existing["id"], cache_key)
+        return JSONResponse(
+            status_code=202,
+            content=job_to_api_response(existing),
+        )
+
+    job_id = create_job(cache_key, file_infos)
+    save_job_input(job_id, files_data)
+    job = get_job(job_id)
     prune_expired_cache()
-    return response
+    prune_finished_jobs()
 
+    return JSONResponse(
+        status_code=202,
+        content=job_to_api_response(job),
+    )
+
+
+@app.get("/api/jobs/{job_id}")
+def get_analysis_job(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = None
+    if job["status"] == "completed":
+        result = get_cached_response(job["cache_key"])
+        if result is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Job completed but result is no longer available",
+            )
+
+    return job_to_api_response(job, result=result)
+
+
+@app.post("/api/upload")
+async def upload_files(
+    files: List[UploadFile] = File(default=[]),
+    url: Optional[str] = Form(default=None),
+):
+    """Deprecated: submits a job and returns its initial status."""
+    return await create_analysis_job(files=files, url=url)

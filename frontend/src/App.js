@@ -53,12 +53,28 @@ const getBadgeStyle = (value, colorScale) => {
   };
 };
 
+function syncUrlQueryParam(value) {
+  const params = new URLSearchParams(window.location.search);
+  const trimmed = value.trim();
+  if (trimmed) {
+    params.set('url', trimmed);
+  } else {
+    params.delete('url');
+  }
+  const query = params.toString();
+  const nextPath = query
+    ? `${window.location.pathname}?${query}`
+    : window.location.pathname;
+  window.history.replaceState(null, '', nextPath);
+}
+
 function App() {
   const [files, setFiles] = useState([]);
   const [url, setUrl] = useState('');
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [jobStatus, setJobStatus] = useState(null);
   const [annotations, setAnnotations] = useState({});
   const [annotationsLoaded, setAnnotationsLoaded] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
@@ -76,6 +92,14 @@ function App() {
     const lat = occurrence.decimalLatitude ?? 'na';
     return `${aphiaid}|${lon}|${lat}`;
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlParam = params.get('url');
+    if (urlParam) {
+      setUrl(urlParam);
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -234,13 +258,16 @@ function App() {
     
     setFiles(selectedFiles);
     setUrl('');
+    syncUrlQueryParam('');
     setUploadResult(null);
     setUploadError(null);
     setExpandedRow(null);
   };
 
   const handleUrlChange = (event) => {
-    setUrl(event.target.value);
+    const nextUrl = event.target.value;
+    setUrl(nextUrl);
+    syncUrlQueryParam(nextUrl);
     setFiles([]);
     // Clear the file input element
     const fileInput = document.getElementById('fileUpload');
@@ -252,6 +279,35 @@ function App() {
     setExpandedRow(null);
   };
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const unwrapJobResult = (data) => (
+    data.result || {
+      files_received: data.files_received,
+      files: data.files,
+      processing: data.processing,
+      cached: data.cached,
+      cache_key: data.cache_key,
+    }
+  );
+
+  const pollJobUntilDone = async (jobId) => {
+    while (true) {
+      const response = await axios.get(`${API_URL}/api/jobs/${jobId}`);
+      const data = response.data;
+      setJobStatus(data);
+
+      if (data.status === 'completed') {
+        return unwrapJobResult(data);
+      }
+      if (data.status === 'failed') {
+        throw new Error(data.error || 'Analysis failed');
+      }
+
+      await sleep(1500);
+    }
+  };
+
   const handleUpload = async (event) => {
     event.preventDefault();
     if (!files.length && !url.trim()) {
@@ -261,6 +317,7 @@ function App() {
     setLoading(true);
     setUploadResult(null);
     setUploadError(null);
+    setJobStatus(null);
     setExpandedRow(null);
 
     const formData = new FormData();
@@ -274,10 +331,20 @@ function App() {
     }
 
     try {
-      const response = await axios.post(`${API_URL}/api/upload`, formData, {
+      const response = await axios.post(`${API_URL}/api/jobs`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setUploadResult(response.data);
+      const data = response.data;
+
+      if (data.status === 'completed') {
+        setUploadResult(unwrapJobResult(data));
+        setUploadError(null);
+        return;
+      }
+
+      setJobStatus(data);
+      const result = await pollJobUntilDone(data.job_id);
+      setUploadResult(result);
       setUploadError(null);
     } catch (error) {
       console.error('Upload error:', error);
@@ -286,11 +353,14 @@ function App() {
       setUploadResult(null);
     } finally {
       setLoading(false);
+      setJobStatus(null);
     }
   };
 
   const loadExample = () => {
-    setUrl('https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0');
+    const exampleUrl = 'https://ipt.obis.org/secretariat/archive.do?r=edna-wadden-sea&v=2.0';
+    setUrl(exampleUrl);
+    syncUrlQueryParam(exampleUrl);
     setFiles([]);
     const fileInput = document.getElementById('fileUpload');
     if (fileInput) {
@@ -403,7 +473,15 @@ function App() {
         {loading && (
           <div className="loading">
             <div className="spinner" role="status" aria-label="Loading" />
-            <span>Running analysis…</span>
+            <span>
+              {jobStatus?.status === 'queued' && jobStatus.position > 0
+                ? `Queued (position ${jobStatus.position + 1})…`
+                : jobStatus?.status === 'queued'
+                  ? 'Queued…'
+                  : jobStatus?.status === 'running'
+                    ? 'Processing…'
+                    : 'Submitting…'}
+            </span>
           </div>
         )}
 

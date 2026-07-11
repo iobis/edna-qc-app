@@ -21,11 +21,39 @@ services:
       - /Volumes/acasis/speedy_output/edna_qc:/data
       - /Volumes/acasis/speciesgrids/h3_7:/data/speciesgrids
       - ./data/cache:/data/cache
+      - ./data/jobs:/data/jobs
     environment:
       - PYTHONUNBUFFERED=1
       - SPECIESGRIDS_DIR=/data/speciesgrids
       - RESULT_CACHE_DIR=/data/cache
       - RESULT_CACHE_TTL_SECONDS=86400
+      - JOBS_DIR=/data/jobs
+      - JOBS_DB_PATH=/data/jobs/jobs.sqlite
+      - JOB_META_TTL_SECONDS=3600
+      - JOB_FAILED_TTL_SECONDS=86400
+
+  worker:
+    build: ./backend
+    command: python worker.py
+    volumes:
+      - ./backend:/app
+      - /Volumes/acasis/speedy_output/edna_qc:/data
+      - /Volumes/acasis/speciesgrids/h3_7:/data/speciesgrids
+      - ./data/cache:/data/cache
+      - ./data/jobs:/data/jobs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SPECIESGRIDS_DIR=/data/speciesgrids
+      - RESULT_CACHE_DIR=/data/cache
+      - RESULT_CACHE_TTL_SECONDS=86400
+      - JOBS_DIR=/data/jobs
+      - JOBS_DB_PATH=/data/jobs/jobs.sqlite
+      - JOB_META_TTL_SECONDS=3600
+      - JOB_FAILED_TTL_SECONDS=86400
+      - WORKER_POLL_INTERVAL_SECONDS=1
+    depends_on:
+      - backend
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
