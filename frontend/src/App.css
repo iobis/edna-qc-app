@@ -424,6 +424,15 @@ td.species {
   border: 1px solid var(--border);
 }
 
+.density-map-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c0392b;
+  opacity: 0.75;
+}
+
 .density-map {
   width: 100%;
   height: 360px;

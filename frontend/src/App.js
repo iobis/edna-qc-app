@@ -7,7 +7,7 @@ import './App.css';
 // Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
 // Empty string means use relative URLs (works with nginx proxy)
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAP_GEOMETRY_VERSION = 2;
+const MAP_GEOMETRY_VERSION = 3;
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip'];
 
@@ -587,6 +587,7 @@ function App() {
                                 {cachedMap && mapLoading !== rowKey && !mapErrors[rowKey] && (
                                   <DensityMap
                                     geojson={cachedMap}
+                                    records={cachedMap.records}
                                     aphiaid={occurrence.aphiaid}
                                     lon={occurrence.decimalLongitude}
                                     lat={occurrence.decimalLatitude}

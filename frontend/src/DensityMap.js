@@ -80,7 +80,7 @@ function boundsFromGeoJSON(geojson) {
   return bounds;
 }
 
-function DensityMap({ geojson, aphiaid, lon, lat }) {
+function DensityMap({ geojson, records, aphiaid, lon, lat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const [mapError, setMapError] = useState(null);
@@ -134,6 +134,31 @@ function DensityMap({ geojson, aphiaid, lon, lat }) {
 
       map.addLayer(COASTLINES_LAYER);
 
+      if (records?.features?.length) {
+        map.addSource('speciesgrids-records', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: records.features },
+        });
+
+        map.addLayer({
+          id: 'speciesgrids-records',
+          type: 'circle',
+          source: 'speciesgrids-records',
+          paint: {
+            'circle-radius': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              3, 2,
+              6, 3.5,
+              9, 5,
+            ],
+            'circle-color': '#c0392b',
+            'circle-opacity': 0.75,
+          },
+        });
+      }
+
       if (lon != null && lat != null) {
         map.addSource('occurrence-point', {
           type: 'geojson',
@@ -177,16 +202,21 @@ function DensityMap({ geojson, aphiaid, lon, lat }) {
       map.remove();
       mapRef.current = null;
     };
-  }, [geojson, aphiaid, lon, lat]);
+  }, [geojson, records, aphiaid, lon, lat]);
 
   return (
     <div className="density-map-panel">
       <div className="density-map-header">
         <span>Density map · AphiaID {aphiaid}</span>
         <span className="density-map-legend">
-          Low
+          Density
           <span className="density-map-legend-bar" aria-hidden="true" />
-          High
+          {records?.features?.length ? (
+            <>
+              <span className="density-map-legend-dot" aria-hidden="true" />
+              Records
+            </>
+          ) : null}
         </span>
       </div>
       {mapError && <div className="density-map-error">{mapError}</div>}

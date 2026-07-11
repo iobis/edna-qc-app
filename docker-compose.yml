@@ -19,8 +19,10 @@ services:
     volumes:
       - ./backend:/app
       - /Volumes/acasis/speedy_output/edna_qc:/data
+      - /Volumes/acasis/speciesgrids/h3_7:/data/speciesgrids
     environment:
       - PYTHONUNBUFFERED=1
+      - SPECIESGRIDS_DIR=/data/speciesgrids
 
   frontend:
     build: ./frontend

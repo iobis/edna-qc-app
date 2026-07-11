@@ -1,5 +1,6 @@
 from typing import Optional
 import copy
+import json
 import math
 import os
 
@@ -8,6 +9,16 @@ import duckdb
 import h3
 
 from analysis import SPEEDY_DATA_DIR, SPEEDY_RESOLUTION
+
+_DEFAULT_SPECIESGRIDS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data",
+    "speciesgrids",
+)
+SPECIESGRIDS_DIR = os.environ.get(
+    "SPECIESGRIDS_DIR",
+    "/data/speciesgrids" if os.path.isdir("/data/speciesgrids") else _DEFAULT_SPECIESGRIDS,
+)
 
 
 def _sanitize(value):
@@ -40,6 +51,55 @@ def _h3_cell_to_geojson_geometry(h3_index: str) -> Optional[dict]:
     if not _geometry_is_valid(fixed):
         return None
     return fixed
+
+
+def _speciesgrids_glob() -> str:
+    pattern = os.path.join(SPECIESGRIDS_DIR, "*")
+    if not os.path.isdir(SPECIESGRIDS_DIR):
+        raise FileNotFoundError(f"Species grids directory not found: {SPECIESGRIDS_DIR}")
+    return pattern
+
+
+def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
+    glob_pattern = _speciesgrids_glob()
+
+    conn = duckdb.connect(database=":memory:")
+    try:
+        conn.execute("INSTALL spatial;")
+        conn.execute("LOAD spatial;")
+
+        rows = conn.execute(
+            """
+            SELECT
+                cell,
+                records,
+                min_year,
+                max_year,
+                ST_AsGeoJSON(geometry) AS geometry_json
+            FROM read_parquet(?)
+            WHERE AphiaID = ?
+            """,
+            [glob_pattern, aphiaid],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    features = []
+    for cell, records, min_year, max_year, geometry_json in rows:
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": json.loads(geometry_json),
+                "properties": {
+                    "cell": cell,
+                    "records": int(records),
+                    "min_year": _sanitize(min_year),
+                    "max_year": _sanitize(max_year),
+                },
+            }
+        )
+
+    return {"type": "FeatureCollection", "features": features}
 
 
 def get_density_map_geojson(
@@ -92,8 +152,14 @@ def get_density_map_geojson(
             }
         )
 
+    try:
+        records = get_speciesgrids_records_geojson(aphiaid)
+    except FileNotFoundError:
+        records = {"type": "FeatureCollection", "features": []}
+
     return {
         "type": "FeatureCollection",
         "features": features,
         "occurrence": {"lon": lon, "lat": lat} if lon is not None and lat is not None else None,
+        "records": records,
     }
