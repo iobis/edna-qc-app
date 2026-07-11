@@ -1,5 +1,4 @@
-from typing import List, Optional
-import copy
+from typing import List, Optional, Tuple
 import json
 import logging
 import math
@@ -48,12 +47,51 @@ def _geometry_is_valid(geometry: dict) -> bool:
     return all(_ring_longitude_span(ring) <= 180 for ring in rings)
 
 
-def _h3_cell_to_geojson_geometry(h3_index: str) -> Optional[dict]:
-    geo = copy.deepcopy(h3.cells_to_geo([h3_index]))
-    fixed = antimeridian.fix_geojson(geo)
-    if not _geometry_is_valid(fixed):
-        return None
-    return fixed
+def _build_density_features(
+    rows: List[Tuple[str, object, object]],
+    occurrence_h3: Optional[str] = None,
+) -> List[dict]:
+    if not rows:
+        return []
+
+    h3_indices = [row[0] for row in rows]
+    densities = [row[1] for row in rows]
+    suitabilities = [row[2] for row in rows]
+
+    geometries: List[dict] = []
+    for h3_index in h3_indices:
+        boundary = h3.cell_to_boundary(h3_index)
+        ring = [[lng, lat] for lat, lng in boundary]
+        ring.append(ring[0])
+        geometries.append({"type": "Polygon", "coordinates": [ring]})
+
+    features: List[dict] = []
+    for h3_index, density, suitability, geometry in zip(
+        h3_indices,
+        densities,
+        suitabilities,
+        geometries,
+    ):
+        if not _geometry_is_valid(geometry):
+            fixed = antimeridian.fix_geojson(geometry)
+            if not _geometry_is_valid(fixed):
+                continue
+            geometry = fixed
+
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": {
+                    "h3": h3_index,
+                    "density": _sanitize(density),
+                    "suitability": _sanitize(suitability),
+                    "is_occurrence": h3_index == occurrence_h3 if occurrence_h3 else False,
+                },
+            }
+        )
+
+    return features
 
 
 def _speciesgrids_parquet_paths() -> List[str]:
@@ -146,24 +184,7 @@ def get_density_map_geojson(
     finally:
         conn.close()
 
-    features = []
-    for h3_index, density, suitability, in rows:
-        geometry = _h3_cell_to_geojson_geometry(h3_index)
-        if geometry is None:
-            continue
-
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": geometry,
-                "properties": {
-                    "h3": h3_index,
-                    "density": _sanitize(density),
-                    "suitability": _sanitize(suitability),
-                    "is_occurrence": h3_index == occurrence_h3 if occurrence_h3 else False,
-                },
-            }
-        )
+    features = _build_density_features(rows, occurrence_h3=occurrence_h3)
 
     try:
         records = get_speciesgrids_records_geojson(aphiaid)
