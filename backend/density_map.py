@@ -21,6 +21,7 @@ SPECIESGRIDS_DIR = os.environ.get(
     "SPECIESGRIDS_DIR",
     "/data/speciesgrids" if os.path.isdir("/data/speciesgrids") else _DEFAULT_SPECIESGRIDS,
 )
+DENSITY_MAP_MIN_DENSITY = float(os.environ.get("DENSITY_MAP_MIN_DENSITY", "0.08"))
 
 
 def _sanitize(value):
@@ -48,7 +49,7 @@ def _geometry_is_valid(geometry: dict) -> bool:
 
 
 def _build_density_features(
-    rows: List[Tuple[str, object, object]],
+    rows: List[Tuple[str, object]],
     occurrence_h3: Optional[str] = None,
 ) -> List[dict]:
     if not rows:
@@ -56,7 +57,6 @@ def _build_density_features(
 
     h3_indices = [row[0] for row in rows]
     densities = [row[1] for row in rows]
-    suitabilities = [row[2] for row in rows]
 
     geometries: List[dict] = []
     for h3_index in h3_indices:
@@ -66,12 +66,7 @@ def _build_density_features(
         geometries.append({"type": "Polygon", "coordinates": [ring]})
 
     features: List[dict] = []
-    for h3_index, density, suitability, geometry in zip(
-        h3_indices,
-        densities,
-        suitabilities,
-        geometries,
-    ):
+    for h3_index, density, geometry in zip(h3_indices, densities, geometries):
         if not _geometry_is_valid(geometry):
             fixed = antimeridian.fix_geojson(geometry)
             if not _geometry_is_valid(fixed):
@@ -85,7 +80,6 @@ def _build_density_features(
                 "properties": {
                     "h3": h3_index,
                     "density": _sanitize(density),
-                    "suitability": _sanitize(suitability),
                     "is_occurrence": h3_index == occurrence_h3 if occurrence_h3 else False,
                 },
             }
@@ -174,13 +168,24 @@ def get_density_geojson(
                 [float(lat), float(lon), SPEEDY_RESOLUTION],
             ).fetchone()[0]
 
-        rows = conn.execute(
-            """
-            SELECT h3, density, suitability
-            FROM read_parquet(?)
-            """,
-            [file_path],
-        ).fetchall()
+        if occurrence_h3 is not None:
+            rows = conn.execute(
+                """
+                SELECT h3, density
+                FROM read_parquet(?)
+                WHERE density >= ? OR h3 = ?
+                """,
+                [file_path, DENSITY_MAP_MIN_DENSITY, occurrence_h3],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT h3, density
+                FROM read_parquet(?)
+                WHERE density >= ?
+                """,
+                [file_path, DENSITY_MAP_MIN_DENSITY],
+            ).fetchall()
     finally:
         conn.close()
 

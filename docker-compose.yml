@@ -32,6 +32,7 @@ services:
       - JOBS_DB_PATH=/data/jobs/jobs.sqlite
       - JOB_META_TTL_SECONDS=3600
       - JOB_FAILED_TTL_SECONDS=86400
+      - DENSITY_MAP_MIN_DENSITY=0.08
 
   worker:
     build: ./backend
@@ -52,6 +53,7 @@ services:
       - JOBS_DB_PATH=/data/jobs/jobs.sqlite
       - JOB_META_TTL_SECONDS=3600
       - JOB_FAILED_TTL_SECONDS=86400
+      - DENSITY_MAP_MIN_DENSITY=0.08
       - WORKER_POLL_INTERVAL_SECONDS=1
     depends_on:
       - backend
