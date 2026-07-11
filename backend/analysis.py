@@ -34,6 +34,20 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     if not occurrences:
         return occurrences
 
+    if not os.path.isdir(SPEEDY_DATA_DIR):
+        logger.warning("SPEEDY data directory not found: %s", SPEEDY_DATA_DIR)
+        return occurrences
+
+    parquet_files = [
+        name for name in os.listdir(SPEEDY_DATA_DIR)
+        if name.endswith(".parquet") and os.path.isfile(os.path.join(SPEEDY_DATA_DIR, name))
+    ]
+    if not parquet_files:
+        logger.warning("No parquet files found in SPEEDY data directory: %s", SPEEDY_DATA_DIR)
+
+    missing_parquet = 0
+    scored = 0
+
     conn = duckdb.connect(database=":memory:")
     try:
         conn.execute("INSTALL h3 FROM community;")
@@ -57,6 +71,7 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
 
             file_path = os.path.join(SPEEDY_DATA_DIR, f"{aphiaid}.parquet")
             if not os.path.exists(file_path):
+                missing_parquet += 1
                 continue
 
             try:
@@ -79,8 +94,17 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
             occurrence["density"] = density
             occurrence["suitability"] = suitability
             occurrence["score"] = suitability
+            scored += 1
     finally:
         conn.close()
+
+    if missing_parquet:
+        logger.info(
+            "SPEEDY lookup: %s scored, %s without parquet file in %s",
+            scored,
+            missing_parquet,
+            SPEEDY_DATA_DIR,
+        )
 
     return occurrences
 

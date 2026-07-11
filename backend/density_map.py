@@ -1,6 +1,7 @@
-from typing import Optional
+from typing import List, Optional
 import copy
 import json
+import logging
 import math
 import os
 
@@ -9,6 +10,8 @@ import duckdb
 import h3
 
 from analysis import SPEEDY_DATA_DIR, SPEEDY_RESOLUTION
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_SPECIESGRIDS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -53,15 +56,25 @@ def _h3_cell_to_geojson_geometry(h3_index: str) -> Optional[dict]:
     return fixed
 
 
-def _speciesgrids_glob() -> str:
-    pattern = os.path.join(SPECIESGRIDS_DIR, "*")
+def _speciesgrids_parquet_paths() -> List[str]:
     if not os.path.isdir(SPECIESGRIDS_DIR):
         raise FileNotFoundError(f"Species grids directory not found: {SPECIESGRIDS_DIR}")
-    return pattern
+
+    paths: List[str] = []
+    for root, _, files in os.walk(SPECIESGRIDS_DIR):
+        for name in files:
+            path = os.path.join(root, name)
+            if os.path.isfile(path):
+                paths.append(path)
+
+    if not paths:
+        raise FileNotFoundError(f"No species grid files found in {SPECIESGRIDS_DIR}")
+
+    return sorted(paths)
 
 
 def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
-    glob_pattern = _speciesgrids_glob()
+    parquet_paths = _speciesgrids_parquet_paths()
 
     conn = duckdb.connect(database=":memory:")
     try:
@@ -79,7 +92,7 @@ def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
             FROM read_parquet(?)
             WHERE AphiaID = ?
             """,
-            [glob_pattern, aphiaid],
+            [parquet_paths, aphiaid],
         ).fetchall()
     finally:
         conn.close()
@@ -155,6 +168,9 @@ def get_density_map_geojson(
     try:
         records = get_speciesgrids_records_geojson(aphiaid)
     except FileNotFoundError:
+        records = {"type": "FeatureCollection", "features": []}
+    except Exception as exc:
+        logger.warning("Failed to load speciesgrids records for %s: %s", aphiaid, exc)
         records = {"type": "FeatureCollection", "features": []}
 
     return {
