@@ -317,6 +317,21 @@ td.species {
   padding-left: 0.4rem;
 }
 
+.species-toggle {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 500;
+  color: var(--accent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.species-toggle:hover {
+  text-decoration: underline;
+}
+
 .badge {
   display: inline-block;
   padding: 0.2rem 0.5rem;
@@ -396,6 +411,31 @@ td.species {
   margin-bottom: 0.75rem;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.density-map-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.density-map-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.density-map-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.density-map-links svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  opacity: 0.75;
 }
 
 .density-map-legend {

@@ -104,7 +104,19 @@ function addRecordsLayer(map, records) {
   map.moveLayer('speciesgrids-records');
 }
 
-function DensityMap({ geojson, records, aphiaid, lon, lat }) {
+function ExternalLinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+      />
+    </svg>
+  );
+}
+
+function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
@@ -223,10 +235,40 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
     }
   }, [records]);
 
+  const gbifQuery = encodeURIComponent(scientificName || String(aphiaid)).replace(/%20/g, '+');
+
   return (
     <div className="density-map-panel">
       <div className="density-map-header">
-        <span>Density map · AphiaID {aphiaid}</span>
+        <span className="density-map-title">
+          Density map
+          <span className="density-map-links">
+            <a
+              href={`https://www.marinespecies.org/aphia.php?p=taxdetails&id=${aphiaid}#distributions`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              WoRMS
+              <ExternalLinkIcon />
+            </a>
+            <a
+              href={`https://obis.org/taxon/${aphiaid}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              OBIS
+              <ExternalLinkIcon />
+            </a>
+            <a
+              href={`https://www.gbif.org/taxon/search?q=${gbifQuery}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GBIF
+              <ExternalLinkIcon />
+            </a>
+          </span>
+        </span>
         <span className="density-map-legend">
           Density
           <span className="density-map-legend-bar" aria-hidden="true" />

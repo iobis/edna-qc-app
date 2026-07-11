@@ -628,13 +628,14 @@ function App() {
                               </td>
                             <td className="species">
                               {occurrence.aphiaid ? (
-                                <a
-                                  href={`https://obis.org/taxon/${occurrence.aphiaid}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                <button
+                                  type="button"
+                                  className="species-toggle"
+                                  onClick={() => toggleRowExpand(rowKey, occurrence)}
+                                  aria-expanded={isExpanded}
                                 >
                                   {occurrence.scientificName || occurrence.aphiaid}
-                                </a>
+                                </button>
                               ) : (
                                 occurrence.scientificName || <span className="empty-cell">—</span>
                               )}
@@ -723,6 +724,7 @@ function App() {
                                     geojson={density}
                                     records={records}
                                     aphiaid={occurrence.aphiaid}
+                                    scientificName={occurrence.scientificName}
                                     lon={occurrence.decimalLongitude}
                                     lat={occurrence.decimalLatitude}
                                   />
