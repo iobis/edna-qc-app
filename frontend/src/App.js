@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
 import DensityMap from './DensityMap';
@@ -70,7 +70,11 @@ function syncUrlQueryParam(value) {
 
 function App() {
   const [files, setFiles] = useState([]);
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('url') || '';
+  });
+  const autoStartDone = useRef(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -92,14 +96,6 @@ function App() {
     const lat = occurrence.decimalLatitude ?? 'na';
     return `${aphiaid}|${lon}|${lat}`;
   };
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlParam = params.get('url');
-    if (urlParam) {
-      setUrl(urlParam);
-    }
-  }, []);
 
   useEffect(() => {
     try {
@@ -308,9 +304,9 @@ function App() {
     }
   };
 
-  const handleUpload = async (event) => {
-    event.preventDefault();
-    if (!files.length && !url.trim()) {
+  const runAnalysis = useCallback(async (urlValue, fileList) => {
+    const trimmedUrl = urlValue.trim();
+    if (!fileList.length && !trimmedUrl) {
       return;
     }
 
@@ -321,13 +317,11 @@ function App() {
     setExpandedRow(null);
 
     const formData = new FormData();
-    if (files.length > 0) {
-      files.forEach((file) => {
-        formData.append('files', file);
-      });
-    }
-    if (url.trim()) {
-      formData.append('url', url.trim());
+    fileList.forEach((file) => {
+      formData.append('files', file);
+    });
+    if (trimmedUrl) {
+      formData.append('url', trimmedUrl);
     }
 
     try {
@@ -355,6 +349,24 @@ function App() {
       setLoading(false);
       setJobStatus(null);
     }
+  }, []);
+
+  useEffect(() => {
+    if (autoStartDone.current) {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const urlParam = params.get('url')?.trim();
+    if (!urlParam) {
+      return;
+    }
+    autoStartDone.current = true;
+    runAnalysis(urlParam, []);
+  }, [runAnalysis]);
+
+  const handleUpload = async (event) => {
+    event.preventDefault();
+    await runAnalysis(url, files);
   };
 
   const loadExample = () => {
