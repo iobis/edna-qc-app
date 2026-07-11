@@ -83,6 +83,7 @@ function App() {
   const [annotationsLoaded, setAnnotationsLoaded] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
   const [mapCache, setMapCache] = useState({});
+  const [recordsCache, setRecordsCache] = useState({});
   const [mapLoading, setMapLoading] = useState(null);
   const [mapErrors, setMapErrors] = useState({});
 
@@ -391,7 +392,39 @@ function App() {
 
     setExpandedRow(rowKey);
 
-    if (!occurrence.aphiaid || mapCache[occurrence.aphiaid]) {
+    const aphiaid = occurrence.aphiaid;
+    if (!aphiaid) {
+      return;
+    }
+
+    const cachedDensity = mapCache[aphiaid];
+    if (cachedDensity && aphiaid in recordsCache) {
+      return;
+    }
+
+    const fetchRecords = async () => {
+      try {
+        const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
+        const response = await axios.get(
+          `${API_URL}/api/density-map/${aphiaid}/records?${params.toString()}`
+        );
+        setRecordsCache((prev) => (
+          aphiaid in prev ? prev : { ...prev, [aphiaid]: response.data }
+        ));
+      } catch (error) {
+        console.error('Failed to load speciesgrids records:', error);
+        setRecordsCache((prev) => (
+          aphiaid in prev
+            ? prev
+            : { ...prev, [aphiaid]: { type: 'FeatureCollection', features: [] } }
+        ));
+      }
+    };
+
+    if (cachedDensity) {
+      if (!(aphiaid in recordsCache)) {
+        void fetchRecords();
+      }
       return;
     }
 
@@ -404,16 +437,16 @@ function App() {
       if (occurrence.decimalLatitude != null) {
         params.set('lat', occurrence.decimalLatitude);
       }
-      const query = params.toString();
       const response = await axios.get(
-        `${API_URL}/api/density-map/${occurrence.aphiaid}${query ? `?${query}` : ''}`
+        `${API_URL}/api/density-map/${aphiaid}?${params.toString()}`
       );
-      setMapCache((prev) => ({ ...prev, [occurrence.aphiaid]: response.data }));
+      setMapCache((prev) => ({ ...prev, [aphiaid]: response.data }));
       setMapErrors((prev) => {
         const next = { ...prev };
         delete next[rowKey];
         return next;
       });
+      void fetchRecords();
     } catch (error) {
       const message = error.response?.data?.detail || 'Failed to load density map';
       setMapErrors((prev) => ({ ...prev, [rowKey]: message }));
@@ -563,7 +596,8 @@ function App() {
                         const annotationValue = annotationData.annotation || '';
                         const commentsValue = annotationData.comments || '';
                         const isExpanded = expandedRow === rowKey;
-                        const cachedMap = occurrence.aphiaid ? mapCache[occurrence.aphiaid] : null;
+                        const density = occurrence.aphiaid ? mapCache[occurrence.aphiaid] : null;
+                        const records = occurrence.aphiaid ? recordsCache[occurrence.aphiaid] : undefined;
                         return (
                           <React.Fragment key={rowKey}>
                             <tr className={isExpanded ? 'row-expanded' : undefined}>
@@ -670,10 +704,10 @@ function App() {
                                 {mapErrors[rowKey] && (
                                   <div className="density-map-error">{mapErrors[rowKey]}</div>
                                 )}
-                                {cachedMap && mapLoading !== rowKey && !mapErrors[rowKey] && (
+                                {density && mapLoading !== rowKey && !mapErrors[rowKey] && (
                                   <DensityMap
-                                    geojson={cachedMap}
-                                    records={cachedMap.records}
+                                    geojson={density}
+                                    records={records}
                                     aphiaid={occurrence.aphiaid}
                                     lon={occurrence.decimalLongitude}
                                     lat={occurrence.decimalLatitude}

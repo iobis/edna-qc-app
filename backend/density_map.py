@@ -153,7 +153,7 @@ def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-def get_density_map_geojson(
+def get_density_geojson(
     aphiaid: int,
     lon: Optional[float] = None,
     lat: Optional[float] = None,
@@ -186,17 +186,8 @@ def get_density_map_geojson(
 
     features = _build_density_features(rows, occurrence_h3=occurrence_h3)
 
-    try:
-        records = get_speciesgrids_records_geojson(aphiaid)
-    except FileNotFoundError:
-        records = {"type": "FeatureCollection", "features": []}
-    except Exception as exc:
-        logger.warning("Failed to load speciesgrids records for %s: %s", aphiaid, exc)
-        records = {"type": "FeatureCollection", "features": []}
-
     return {
         "type": "FeatureCollection",
         "features": features,
         "occurrence": {"lon": lon, "lat": lat} if lon is not None and lat is not None else None,
-        "records": records,
     }

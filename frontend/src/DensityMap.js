@@ -35,7 +35,6 @@ const BASE_STYLE = {
   ],
 };
 
-// Soft warm ramp: fades in at low density, muted coral at high.
 const DENSITY_FILL_COLOR = [
   'interpolate',
   ['linear'],
@@ -80,9 +79,35 @@ function boundsFromGeoJSON(geojson) {
   return bounds;
 }
 
+function addRecordsLayer(map, records) {
+  if (!records?.features?.length) {
+    return;
+  }
+
+  const data = { type: 'FeatureCollection', features: records.features };
+  const source = map.getSource('speciesgrids-records');
+  if (source) {
+    source.setData(data);
+  } else {
+    map.addSource('speciesgrids-records', { type: 'geojson', data });
+    map.addLayer({
+      id: 'speciesgrids-records',
+      type: 'circle',
+      source: 'speciesgrids-records',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 2, 6, 3.5, 9, 5],
+        'circle-color': '#c0392b',
+        'circle-opacity': 0.75,
+      },
+    });
+  }
+  map.moveLayer('speciesgrids-records');
+}
+
 function DensityMap({ geojson, records, aphiaid, lon, lat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
+  const layersReadyRef = useRef(false);
   const [mapError, setMapError] = useState(null);
 
   useEffect(() => {
@@ -91,6 +116,7 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
     }
 
     setMapError(null);
+    layersReadyRef.current = false;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -100,6 +126,7 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
       attributionControl: false,
     });
 
+    mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
     map.on('load', () => {
@@ -134,31 +161,6 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
 
       map.addLayer(COASTLINES_LAYER);
 
-      if (records?.features?.length) {
-        map.addSource('speciesgrids-records', {
-          type: 'geojson',
-          data: { type: 'FeatureCollection', features: records.features },
-        });
-
-        map.addLayer({
-          id: 'speciesgrids-records',
-          type: 'circle',
-          source: 'speciesgrids-records',
-          paint: {
-            'circle-radius': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              3, 2,
-              6, 3.5,
-              9, 5,
-            ],
-            'circle-color': '#c0392b',
-            'circle-opacity': 0.75,
-          },
-        });
-      }
-
       if (lon != null && lat != null) {
         map.addSource('occurrence-point', {
           type: 'geojson',
@@ -182,6 +184,8 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
         });
       }
 
+      layersReadyRef.current = true;
+
       try {
         const bounds = boundsFromGeoJSON(geojson);
         if (lon != null && lat != null) {
@@ -201,8 +205,23 @@ function DensityMap({ geojson, records, aphiaid, lon, lat }) {
     return () => {
       map.remove();
       mapRef.current = null;
+      layersReadyRef.current = false;
     };
-  }, [geojson, records, aphiaid, lon, lat]);
+  }, [geojson, aphiaid, lon, lat]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || records === undefined) {
+      return undefined;
+    }
+
+    const apply = () => addRecordsLayer(map, records);
+    if (layersReadyRef.current) {
+      apply();
+    } else {
+      map.once('load', apply);
+    }
+  }, [records]);
 
   return (
     <div className="density-map-panel">

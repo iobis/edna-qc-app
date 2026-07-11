@@ -7,7 +7,7 @@ import zipfile
 
 import requests
 
-from density_map import get_density_map_geojson
+from density_map import get_density_geojson, get_speciesgrids_records_geojson
 from job_storage import save_job_input
 from job_store import (
     create_job,
@@ -57,6 +57,17 @@ def read_root():
     return {"message": "Backend API is running"}
 
 
+@app.get("/api/density-map/{aphiaid}/records")
+def density_map_records(aphiaid: int):
+    try:
+        return get_speciesgrids_records_geojson(aphiaid)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to load speciesgrids records for {aphiaid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load speciesgrids records: {e}")
+
+
 @app.get("/api/density-map/{aphiaid}")
 def density_map(
     aphiaid: int,
@@ -64,7 +75,7 @@ def density_map(
     lat: Optional[float] = Query(default=None),
 ):
     try:
-        return get_density_map_geojson(aphiaid, lon=lon, lat=lat)
+        return get_density_geojson(aphiaid, lon=lon, lat=lat)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
