@@ -8,6 +8,12 @@ import zipfile
 import io
 from parsing import process_uploaded_files
 from density_map import get_density_map_geojson
+from result_cache import (
+    compute_submission_hash,
+    get_cached_response,
+    prune_expired_cache,
+    store_cached_response,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -198,6 +204,12 @@ async def upload_files(
             status_code=400,
             detail=f"Invalid file types. Only {', '.join(sorted(ALLOWED_EXTENSIONS))} files are allowed. Invalid files: {', '.join(invalid_files)}"
         )
+
+    cache_key = compute_submission_hash(files_data)
+    cached_response = get_cached_response(cache_key)
+    if cached_response is not None:
+        logger.info("Serving cached processing result for submission %s", cache_key)
+        return cached_response
     
     try:
         processing_result = process_uploaded_files(files_data)
@@ -212,10 +224,15 @@ async def upload_files(
             status_code=500,
             detail=f"Internal server error while processing files: {str(e)}"
         )
-    
-    return {
+
+    response = {
         "files_received": len(file_infos),
         "files": file_infos,
-        "processing": processing_result
+        "processing": processing_result,
+        "cached": False,
+        "cache_key": cache_key,
     }
+    store_cached_response(cache_key, response)
+    prune_expired_cache()
+    return response
 

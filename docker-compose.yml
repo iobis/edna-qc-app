@@ -20,9 +20,12 @@ services:
       - ./backend:/app
       - /Volumes/acasis/speedy_output/edna_qc:/data
       - /Volumes/acasis/speciesgrids/h3_7:/data/speciesgrids
+      - ./data/cache:/data/cache
     environment:
       - PYTHONUNBUFFERED=1
       - SPECIESGRIDS_DIR=/data/speciesgrids
+      - RESULT_CACHE_DIR=/data/cache
+      - RESULT_CACHE_TTL_SECONDS=86400
 
   frontend:
     build: ./frontend
