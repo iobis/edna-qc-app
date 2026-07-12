@@ -16,6 +16,8 @@ services:
     build: ./backend
     expose:
       - "8000"
+    env_file:
+      - .env
     volumes:
       - ./backend:/app
       - ./data/parquet:/data/parquet

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import zipfile
@@ -23,6 +24,7 @@ from result_cache import (
     prune_expired_cache,
 )
 from upload_processing import ALLOWED_EXTENSIONS, collect_upload_payload
+from xai import ask_observation_likelihood
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +83,42 @@ def density_map(
     except Exception as e:
         logger.error(f"Failed to load density map for {aphiaid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load density map: {e}")
+
+
+class SpeciesLikelihoodRequest(BaseModel):
+    scientific_name: Optional[str] = None
+    aphiaid: Optional[int] = None
+    lat: float
+    lon: float
+
+
+@app.post("/api/species-likelihood")
+def species_likelihood(body: SpeciesLikelihoodRequest):
+    try:
+        answer = ask_observation_likelihood(
+            scientific_name=body.scientific_name,
+            lat=body.lat,
+            lon=body.lon,
+            aphiaid=body.aphiaid,
+        )
+        return {"answer": answer}
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except requests.HTTPError as e:
+        logger.error("xAI API error: %s", e, exc_info=True)
+        detail = "xAI API request failed"
+        if e.response is not None:
+            try:
+                detail = e.response.json().get("error", detail)
+            except ValueError:
+                detail = e.response.text or detail
+        raise HTTPException(status_code=502, detail=detail) from e
+    except requests.RequestException as e:
+        logger.error("xAI request failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"xAI request failed: {e}") from e
+    except Exception as e:
+        logger.error("Species likelihood failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Species likelihood failed: {e}") from e
 
 
 async def _read_submission(

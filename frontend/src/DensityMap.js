@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import maplibregl from 'maplibre-gl';
+import ReactMarkdown from 'react-markdown';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 const COASTLINES_LAYER = {
   id: 'coastlines',
@@ -121,6 +125,56 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
   const [mapError, setMapError] = useState(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiAnswer, setAiAnswer] = useState(null);
+  const [aiError, setAiError] = useState(null);
+
+  const canAskAi = lon != null && lat != null;
+
+  const closeAiModal = () => {
+    setAiOpen(false);
+  };
+
+  const handleAskAi = async () => {
+    if (!canAskAi) {
+      return;
+    }
+    setAiOpen(true);
+    setAiLoading(true);
+    setAiAnswer(null);
+    setAiError(null);
+
+    try {
+      const response = await axios.post(`${API_URL}/api/species-likelihood`, {
+        scientific_name: scientificName || null,
+        aphiaid,
+        lat,
+        lon,
+      });
+      setAiAnswer(response.data.answer);
+    } catch (error) {
+      const message = error.response?.data?.detail || error.message || 'Request failed';
+      setAiError(typeof message === 'string' ? message : JSON.stringify(message));
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!aiOpen) {
+      return undefined;
+    }
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        closeAiModal();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [aiOpen]);
 
   useEffect(() => {
     if (!containerRef.current || !geojson) {
@@ -269,7 +323,18 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
             </a>
           </span>
         </span>
-        <span className="density-map-legend">
+        <span className="density-map-header-actions">
+          {canAskAi && (
+            <button
+              type="button"
+              className="btn btn-outline btn-sm density-map-ai-btn"
+              onClick={handleAskAi}
+              disabled={aiLoading}
+            >
+              {aiLoading ? 'Asking…' : 'Ask AI'}
+            </button>
+          )}
+          <span className="density-map-legend">
           Density
           <span className="density-map-legend-bar" aria-hidden="true" />
           {records?.features?.length ? (
@@ -278,8 +343,53 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
               Records
             </>
           ) : null}
+          </span>
         </span>
       </div>
+      {aiOpen && (
+        <div className="ai-modal-backdrop" onClick={closeAiModal} role="presentation">
+          <div
+            className="ai-modal"
+            role="dialog"
+            aria-labelledby="ai-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="ai-modal-header">
+              <h3 id="ai-modal-title">Observation likelihood</h3>
+              <button type="button" className="ai-modal-close" onClick={closeAiModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <p className="ai-modal-context">
+              {scientificName || `AphiaID ${aphiaid}`} at {lat}, {lon}
+            </p>
+            <div className="ai-modal-body">
+              {aiLoading && (
+                <div className="ai-modal-loading">
+                  <div className="spinner" role="status" aria-label="Loading" />
+                  <span>Asking Grok…</span>
+                </div>
+              )}
+              {aiError && <div className="alert alert-danger">{aiError}</div>}
+              {aiAnswer && !aiLoading && (
+                <div className="ai-modal-answer">
+                  <ReactMarkdown
+                    components={{
+                      a: ({ href, children, ...props }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
+                    {aiAnswer}
+                  </ReactMarkdown>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {mapError && <div className="density-map-error">{mapError}</div>}
       <div ref={containerRef} className="density-map" />
     </div>
