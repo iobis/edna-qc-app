@@ -51,9 +51,13 @@ body {
 
 .header p {
   margin: 0;
-  max-width: 680px;
+  max-width: none;
   color: var(--text-muted);
   font-size: 0.9375rem;
+  column-count: 2;
+  column-gap: 2rem;
+  text-align: justify;
+  hyphens: auto;
 }
 
 .dwca-term {
@@ -619,6 +623,11 @@ tbody tr:not(.expand-row):hover {
 
   .header h1 {
     font-size: 1.5rem;
+  }
+
+  .header p {
+    column-count: 1;
+    text-align: left;
   }
 
   .card {
