@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+
+const API_URL = process.env.REACT_APP_API_URL || '';
+const MAP_GEOMETRY_VERSION = 7;
 
 const COASTLINES_LAYER = {
   id: 'coastlines',
@@ -59,6 +63,30 @@ const DENSITY_FILL_OPACITY = [
   1, 0.72,
 ];
 
+const SUITABILITY_FILL_COLOR = [
+  'interpolate',
+  ['linear'],
+  ['coalesce', ['get', 'suitability'], 0],
+  0, '#f0f9f7',
+  0.2, '#c8ebe3',
+  0.4, '#8fd4c4',
+  0.6, '#4fb39c',
+  0.8, '#2a8f7a',
+  1, '#1a6b5c',
+];
+
+const SUITABILITY_FILL_OPACITY = [
+  'interpolate',
+  ['linear'],
+  ['coalesce', ['get', 'suitability'], 0],
+  0, 0,
+  0.08, 0.2,
+  0.3, 0.4,
+  0.6, 0.55,
+  0.85, 0.65,
+  1, 0.7,
+];
+
 function coordsFromGeometry(geometry) {
   if (geometry.type === 'Polygon') {
     return geometry.coordinates[0];
@@ -104,6 +132,43 @@ function addRecordsLayer(map, records) {
   map.moveLayer('speciesgrids-records');
 }
 
+function setSuitabilityLayerData(map, suitabilityGeojson, visible) {
+  const data = suitabilityGeojson || { type: 'FeatureCollection', features: [] };
+  const source = map.getSource('suitability');
+  if (source) {
+    source.setData(data);
+  } else {
+    map.addSource('suitability', { type: 'geojson', data });
+    map.addLayer(
+      {
+        id: 'suitability-fill',
+        type: 'fill',
+        source: 'suitability',
+        layout: {
+          visibility: visible ? 'visible' : 'none',
+        },
+        paint: {
+          'fill-color': SUITABILITY_FILL_COLOR,
+          'fill-opacity': SUITABILITY_FILL_OPACITY,
+        },
+      },
+      map.getLayer('density-outline') ? 'density-outline' : undefined
+    );
+  }
+
+  if (map.getLayer('suitability-fill')) {
+    map.setLayoutProperty(
+      'suitability-fill',
+      'visibility',
+      visible ? 'visible' : 'none'
+    );
+  }
+
+  if (map.getLayer('speciesgrids-records')) {
+    map.moveLayer('speciesgrids-records');
+  }
+}
+
 function ExternalLinkIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
@@ -120,7 +185,11 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
+  const suitabilityCacheRef = useRef({});
   const [mapError, setMapError] = useState(null);
+  const [showSuitability, setShowSuitability] = useState(false);
+  const [suitabilityLoading, setSuitabilityLoading] = useState(false);
+  const [suitabilityError, setSuitabilityError] = useState(null);
 
   useEffect(() => {
     if (!containerRef.current || !geojson) {
@@ -205,6 +274,11 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
 
       layersReadyRef.current = true;
 
+      const cachedSuitability = suitabilityCacheRef.current[aphiaid];
+      if (cachedSuitability) {
+        setSuitabilityLayerData(map, cachedSuitability, false);
+      }
+
       try {
         const bounds = boundsFromGeoJSON(geojson);
         if (lon != null && lat != null) {
@@ -244,6 +318,67 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
     }
   }, [records]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !showSuitability) {
+      if (map?.getLayer('suitability-fill')) {
+        map.setLayoutProperty('suitability-fill', 'visibility', 'none');
+      }
+      return undefined;
+    }
+
+    const cached = suitabilityCacheRef.current[aphiaid];
+    if (cached) {
+      const apply = () => setSuitabilityLayerData(map, cached, true);
+      if (layersReadyRef.current) {
+        apply();
+      } else {
+        map.once('load', apply);
+      }
+      return undefined;
+    }
+
+    let cancelled = false;
+    const loadSuitability = async () => {
+      setSuitabilityLoading(true);
+      setSuitabilityError(null);
+      try {
+        const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
+        if (lon != null) {
+          params.set('lon', String(lon));
+        }
+        if (lat != null) {
+          params.set('lat', String(lat));
+        }
+        const response = await axios.get(
+          `${API_URL}/api/density-map/${aphiaid}/suitability?${params.toString()}`
+        );
+        if (cancelled) {
+          return;
+        }
+        suitabilityCacheRef.current[aphiaid] = response.data;
+        const currentMap = mapRef.current;
+        if (currentMap && layersReadyRef.current) {
+          setSuitabilityLayerData(currentMap, response.data, true);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error.response?.data?.detail || 'Failed to load suitability map';
+          setSuitabilityError(typeof message === 'string' ? message : JSON.stringify(message));
+        }
+      } finally {
+        if (!cancelled) {
+          setSuitabilityLoading(false);
+        }
+      }
+    };
+
+    void loadSuitability();
+    return () => {
+      cancelled = true;
+    };
+  }, [showSuitability, aphiaid, lon, lat, geojson]);
+
   const gbifQuery = encodeURIComponent(scientificName || String(aphiaid)).replace(/%20/g, '+');
 
   return (
@@ -278,18 +413,36 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
             </a>
           </span>
         </span>
-        <span className="density-map-legend">
-          Density
-          <span className="density-map-legend-bar" aria-hidden="true" />
-          {records?.features?.length ? (
-            <>
-              <span className="density-map-legend-dot" aria-hidden="true" />
-              Records
-            </>
-          ) : null}
+        <span className="density-map-header-actions">
+          <label className="density-map-toggle">
+            <input
+              type="checkbox"
+              checked={showSuitability}
+              onChange={(event) => setShowSuitability(event.target.checked)}
+              disabled={suitabilityLoading}
+            />
+            {suitabilityLoading ? 'Suitability…' : 'Suitability'}
+          </label>
+          <span className="density-map-legend">
+            Density
+            <span className="density-map-legend-bar" aria-hidden="true" />
+            {showSuitability && !suitabilityLoading && !suitabilityError ? (
+              <>
+                Suitability
+                <span className="density-map-legend-bar density-map-legend-bar-suitability" aria-hidden="true" />
+              </>
+            ) : null}
+            {records?.features?.length ? (
+              <>
+                <span className="density-map-legend-dot" aria-hidden="true" />
+                Records
+              </>
+            ) : null}
+          </span>
         </span>
       </div>
       {mapError && <div className="density-map-error">{mapError}</div>}
+      {suitabilityError && <div className="density-map-error">{suitabilityError}</div>}
       <div ref={containerRef} className="density-map" />
     </div>
   );

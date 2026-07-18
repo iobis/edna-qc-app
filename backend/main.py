@@ -7,7 +7,11 @@ import zipfile
 
 import requests
 
-from density_map import get_density_geojson, get_speciesgrids_records_geojson
+from density_map import (
+    get_density_geojson,
+    get_suitability_geojson,
+    get_speciesgrids_records_geojson,
+)
 from job_storage import save_job_input
 from job_store import (
     create_job,
@@ -66,6 +70,21 @@ def density_map_records(aphiaid: int):
     except Exception as e:
         logger.error(f"Failed to load speciesgrids records for {aphiaid}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to load speciesgrids records: {e}")
+
+
+@app.get("/api/density-map/{aphiaid}/suitability")
+def density_map_suitability(
+    aphiaid: int,
+    lon: Optional[float] = Query(default=None),
+    lat: Optional[float] = Query(default=None),
+):
+    try:
+        return get_suitability_geojson(aphiaid, lon=lon, lat=lat)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to load suitability map for {aphiaid}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to load suitability map: {e}")
 
 
 @app.get("/api/density-map/{aphiaid}")
