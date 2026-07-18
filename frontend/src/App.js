@@ -55,13 +55,83 @@ const getBadgeStyle = (value, colorScale) => {
 
 function GlobeIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden="true">
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
         d="m20.893 13.393-1.135-1.135a2.252 2.252 0 0 1-.421-.585l-1.08-2.16a.414.414 0 0 0-.663-.107.827.827 0 0 1-.812.21l-1.273-.363a.89.89 0 0 0-.738 1.595l.587.39c.59.395.674 1.23.172 1.732l-.2.2c-.212.212-.33.498-.33.796v.41c0 .409-.11.809-.32 1.158l-1.315 2.191a2.11 2.11 0 0 1-1.81 1.025 1.055 1.055 0 0 1-1.055-1.055v-1.172c0-.92-.56-1.747-1.414-2.089l-.655-.261a2.25 2.25 0 0 1-1.383-2.46l.007-.042a2.25 2.25 0 0 1 .29-.787l.09-.15a2.25 2.25 0 0 1 2.37-1.048l1.178.236a1.125 1.125 0 0 0 1.302-.795l.208-.73a1.125 1.125 0 0 0-.578-1.315l-.665-.332-.091.091a2.25 2.25 0 0 1-1.591.659h-.18c-.249 0-.487.1-.662.274a.931.931 0 0 1-1.458-1.137l1.411-2.353a2.25 2.25 0 0 0 .286-.76m11.928 9.869A9 9 0 0 0 8.965 3.525m11.928 9.868A9 9 0 1 1 8.965 3.525"
       />
     </svg>
+  );
+}
+
+function ClipboardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+    </svg>
+  );
+}
+
+function SequenceBlock({ sequence }) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+  }, []);
+
+  if (!sequence) {
+    return null;
+  }
+
+  const copySequence = async () => {
+    try {
+      await navigator.clipboard.writeText(sequence);
+      setCopied(true);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        setCopied(false);
+        timeoutRef.current = null;
+      }, 1800);
+    } catch (error) {
+      console.error('Failed to copy sequence', error);
+    }
+  };
+
+  return (
+    <div className="expand-sequence">
+      <div className="expand-sequence-header">
+        <span>DNA sequence</span>
+        <button
+          type="button"
+          className={`sequence-copy-btn${copied ? ' sequence-copy-btn-done' : ''}`}
+          onClick={copySequence}
+          aria-label={copied ? 'Copied' : 'Copy sequence'}
+          title={copied ? 'Copied' : 'Copy to clipboard'}
+        >
+          {copied ? <CheckIcon /> : <ClipboardIcon />}
+          <span className="sequence-copy-label">{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <pre className="expand-sequence-body">{sequence}</pre>
+    </div>
   );
 }
 
@@ -99,8 +169,6 @@ function App() {
   const [mapLoading, setMapLoading] = useState(null);
   const [mapErrors, setMapErrors] = useState({});
 
-  const COLUMN_COUNT = 10;
-
   const ANNOTATIONS_STORAGE_KEY = 'occurrenceAnnotations';
 
   const getAnnotationKey = (occurrence) => {
@@ -109,6 +177,8 @@ function App() {
     const lat = occurrence.decimalLatitude ?? 'na';
     return `${aphiaid}|${lon}|${lat}`;
   };
+
+  const COLUMN_COUNT = 9;
 
   useEffect(() => {
     try {
@@ -474,7 +544,8 @@ function App() {
         <p>
           This app performs spatial and environmental outlier detection on species occurrence data.
           Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
-          Datasets should always include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
+          Datasets should include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
+          For Event Core archives, coordinates may live on the event table (or parent events via <code className="dwca-term">parentEventID</code>) and are inherited when the occurrence lacks them.
           If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
           Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
           For a typical dataset, the analysis should finish within one minute.
@@ -586,7 +657,6 @@ function App() {
                       <th>Species</th>
                       <th>Phylum</th>
                       <th>Class</th>
-                      <th>AphiaID</th>
                       <th>Coordinates</th>
                       <th>Density</th>
                       <th>Suitability</th>
@@ -617,7 +687,7 @@ function App() {
                                 {occurrence.aphiaid ? (
                                   <button
                                     type="button"
-                                    className={`row-toggle${isExpanded ? ' row-toggle-open' : ''}`}
+                                    className="row-toggle row-toggle-globe"
                                     onClick={() => toggleRowExpand(rowKey, occurrence)}
                                     aria-expanded={isExpanded}
                                     aria-label={isExpanded ? 'Hide density map' : 'Show density map'}
@@ -642,19 +712,6 @@ function App() {
                             </td>
                             <td>{occurrence.phylum || <span className="empty-cell">—</span>}</td>
                             <td>{occurrence.class || <span className="empty-cell">—</span>}</td>
-                            <td>
-                              {occurrence.aphiaid ? (
-                                <a
-                                  href={`https://www.marinespecies.org/aphia.php?p=taxdetails&id=${occurrence.aphiaid}#distributions`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {occurrence.aphiaid}
-                                </a>
-                              ) : (
-                                <span className="empty-cell">—</span>
-                              )}
-                            </td>
                             <td>
                               {occurrence.decimalLongitude != null && occurrence.decimalLatitude != null ? (
                                 <CoordinatePopover
@@ -710,6 +767,7 @@ function App() {
                           {isExpanded && (
                             <tr className="expand-row">
                               <td colSpan={COLUMN_COUNT}>
+                                <SequenceBlock sequence={occurrence.DNA_sequence} />
                                 {mapLoading === rowKey && (
                                   <div className="density-map-loading">
                                     <div className="spinner" role="status" aria-label="Loading map" />

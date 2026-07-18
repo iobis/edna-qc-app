@@ -385,6 +385,84 @@ td.species {
   color: var(--accent);
 }
 
+.row-toggle-globe,
+.row-toggle-globe:hover,
+.row-toggle-globe:focus {
+  color: #000;
+}
+
+.expand-sequence {
+  padding: 0.85rem 1rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface, #fff);
+}
+
+.expand-sequence-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sequence-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.35rem;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.sequence-copy-btn svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.sequence-copy-label {
+  line-height: 1;
+}
+
+.sequence-copy-btn:hover {
+  color: var(--text);
+  background: rgba(16, 24, 40, 0.05);
+}
+
+.sequence-copy-btn-done,
+.sequence-copy-btn-done:hover {
+  color: var(--accent);
+  background: rgba(26, 107, 92, 0.1);
+}
+
+.expand-sequence-body {
+  margin: 0;
+  max-height: 7.5rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+
 .row-expanded {
   background: rgba(26, 107, 92, 0.04);
 }
