@@ -141,6 +141,13 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
+    // Avoid accidental zoom while the user is scrolling the page
+    map.scrollZoom.disable();
+    const enableScrollZoom = () => map.scrollZoom.enable();
+    const disableScrollZoom = () => map.scrollZoom.disable();
+    map.on('click', enableScrollZoom);
+    map.getCanvas().addEventListener('mouseleave', disableScrollZoom);
+
     map.on('load', () => {
       map.addSource('density', { type: 'geojson', data: geojson });
 
@@ -215,6 +222,8 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
     });
 
     return () => {
+      map.off('click', enableScrollZoom);
+      map.getCanvas().removeEventListener('mouseleave', disableScrollZoom);
       map.remove();
       mapRef.current = null;
       layersReadyRef.current = false;
