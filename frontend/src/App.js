@@ -115,20 +115,34 @@ function SequenceBlock({ sequence }) {
     }
   };
 
+  const blastUrl =
+    `https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&QUERY=${encodeURIComponent(sequence)}`;
+
   return (
     <div className="expand-sequence">
       <div className="expand-sequence-header">
-        <span>DNA sequence</span>
-        <button
+        <div className="expand-sequence-title">
+          <span>DNA sequence</span>
+          <a
+            className="sequence-blast-btn"
+            href={blastUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open sequence in NCBI BLAST"
+          >
+            BLAST
+          </a>
+        </div>
+        {/* <button
           type="button"
-          className={`sequence-copy-btn${copied ? ' sequence-copy-btn-done' : ''}`}
+          className={`sequence-action-btn${copied ? ' sequence-action-btn-done' : ''}`}
           onClick={copySequence}
           aria-label={copied ? 'Copied' : 'Copy sequence'}
           title={copied ? 'Copied' : 'Copy to clipboard'}
         >
           {copied ? <CheckIcon /> : <ClipboardIcon />}
           <span className="sequence-copy-label">{copied ? 'Copied' : 'Copy'}</span>
-        </button>
+        </button> */}
       </div>
       <pre className="expand-sequence-body">{sequence}</pre>
     </div>
