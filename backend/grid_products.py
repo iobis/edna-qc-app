@@ -207,7 +207,12 @@ def densities_for_lookups(
     conn: duckdb.DuckDBPyConnection,
     lookups: List[Tuple[int, int]],
 ) -> Dict[Tuple[int, int], float]:
-    """Batch-fetch densities for (AphiaID, h3) pairs in one parquet scan."""
+    """Batch-fetch densities for (AphiaID, h3) pairs in one parquet scan.
+
+    Cells omitted from the density product (values below the store cutoff) are
+    returned as ``0.0`` when the AphiaID has any density rows at all. AphiaIDs
+    absent from the product are left out of the result (caller treats as no data).
+    """
     if not lookups:
         return {}
     if not density_path_ok():
@@ -226,14 +231,35 @@ def densities_for_lookups(
             """,
             [DENSITY_PATH],
         ).fetchall()
+
+        out: Dict[Tuple[int, int], float] = {}
+        missing_aphiaids = set()
+        for aphiaid, h3_cell, density_u16 in rows:
+            key = (int(aphiaid), int(h3_cell))
+            if density_u16 is None:
+                missing_aphiaids.add(int(aphiaid))
+                continue
+            out[key] = decode_density(density_u16)
+
+        if missing_aphiaids:
+            present_rows = conn.execute(
+                """
+                SELECT DISTINCT AphiaID
+                FROM read_parquet(?)
+                WHERE AphiaID IN (SELECT UNNEST(?::INTEGER[]))
+                """,
+                [DENSITY_PATH, sorted(missing_aphiaids)],
+            ).fetchall()
+            present = {int(row[0]) for row in present_rows}
+            for aphiaid, h3_cell, density_u16 in rows:
+                if density_u16 is not None:
+                    continue
+                key = (int(aphiaid), int(h3_cell))
+                if int(aphiaid) in present:
+                    out[key] = 0.0
     finally:
         conn.execute("DROP TABLE IF EXISTS _density_lookups")
 
-    out: Dict[Tuple[int, int], float] = {}
-    for aphiaid, h3_cell, density_u16 in rows:
-        if density_u16 is None:
-            continue
-        out[(int(aphiaid), int(h3_cell))] = decode_density(density_u16)
     return out
 
 

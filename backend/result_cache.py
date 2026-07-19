@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = os.environ.get("RESULT_CACHE_VERSION", "2")
+CACHE_VERSION = os.environ.get("RESULT_CACHE_VERSION", "3")
 DEFAULT_CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data",
