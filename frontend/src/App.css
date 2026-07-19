@@ -631,6 +631,29 @@ td.species {
   opacity: 0.75;
 }
 
+.density-map-copy-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.density-map-copy-prompt:hover {
+  text-decoration: underline;
+}
+
+.density-map-copy-prompt-done,
+.density-map-copy-prompt-done:hover {
+  text-decoration: none;
+}
+
 .density-map-header-actions {
   display: inline-flex;
   align-items: center;

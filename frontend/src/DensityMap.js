@@ -181,15 +181,48 @@ function ExternalLinkIcon() {
   );
 }
 
+function ClipboardIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+    </svg>
+  );
+}
+
+function buildObservationPrompt(scientificName, aphiaid, lon, lat) {
+  const species = scientificName || `AphiaID ${aphiaid}`;
+  return `How likely is it to observe ${species} at longitude ${lon} and latitude ${lat}?`;
+}
+
 function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
   const suitabilityCacheRef = useRef({});
+  const copyTimeoutRef = useRef(null);
   const [mapError, setMapError] = useState(null);
   const [showSuitability, setShowSuitability] = useState(false);
   const [suitabilityLoading, setSuitabilityLoading] = useState(false);
   const [suitabilityError, setSuitabilityError] = useState(null);
+  const [promptCopied, setPromptCopied] = useState(false);
+
+  useEffect(() => () => {
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current || !geojson) {
@@ -380,6 +413,26 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   }, [showSuitability, aphiaid, lon, lat, geojson]);
 
   const gbifQuery = encodeURIComponent(scientificName || String(aphiaid)).replace(/%20/g, '+');
+  const canCopyPrompt = lon != null && lat != null;
+
+  const copyObservationPrompt = async () => {
+    if (!canCopyPrompt) return;
+    try {
+      await navigator.clipboard.writeText(
+        buildObservationPrompt(scientificName, aphiaid, lon, lat)
+      );
+      setPromptCopied(true);
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+      copyTimeoutRef.current = setTimeout(() => {
+        setPromptCopied(false);
+        copyTimeoutRef.current = null;
+      }, 1800);
+    } catch (error) {
+      console.error('Failed to copy observation prompt', error);
+    }
+  };
 
   return (
     <div className="density-map-panel">
@@ -411,6 +464,22 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
               GBIF
               <ExternalLinkIcon />
             </a>
+            {canCopyPrompt ? (
+              <button
+                type="button"
+                className={`density-map-copy-prompt${promptCopied ? ' density-map-copy-prompt-done' : ''}`}
+                onClick={copyObservationPrompt}
+                aria-label={promptCopied ? 'Prompt copied' : 'Copy observation prompt'}
+                title={
+                  promptCopied
+                    ? 'Copied'
+                    : 'Copy LLM prompt for this observation'
+                }
+              >
+                {promptCopied ? <CheckIcon /> : <ClipboardIcon />}
+                {promptCopied ? 'Copied' : 'Copy prompt'}
+              </button>
+            ) : null}
           </span>
         </span>
         <span className="density-map-header-actions">
