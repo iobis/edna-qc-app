@@ -199,20 +199,83 @@ def density_at_cell(
     aphiaid: int,
     h3_cell: int,
 ) -> Optional[float]:
+    values = densities_for_lookups(conn, [(int(aphiaid), int(h3_cell))])
+    return values.get((int(aphiaid), int(h3_cell)))
+
+
+def densities_for_lookups(
+    conn: duckdb.DuckDBPyConnection,
+    lookups: List[Tuple[int, int]],
+) -> Dict[Tuple[int, int], float]:
+    """Batch-fetch densities for (AphiaID, h3) pairs in one parquet scan."""
+    if not lookups:
+        return {}
     if not density_path_ok():
-        return None
-    result = conn.execute(
-        """
-        SELECT density
-        FROM read_parquet(?)
-        WHERE AphiaID = ? AND h3 = ?
-        LIMIT 1
-        """,
-        [DENSITY_PATH, int(aphiaid), int(h3_cell)],
-    ).fetchone()
-    if result is None:
-        return None
-    return decode_density(result[0])
+        return {}
+
+    unique = sorted({(int(aphiaid), int(h3_cell)) for aphiaid, h3_cell in lookups})
+    conn.execute("CREATE OR REPLACE TEMP TABLE _density_lookups(AphiaID INTEGER, h3 UBIGINT)")
+    conn.executemany("INSERT INTO _density_lookups VALUES (?, ?)", unique)
+    try:
+        rows = conn.execute(
+            """
+            SELECT l.AphiaID, l.h3, d.density
+            FROM _density_lookups l
+            LEFT JOIN read_parquet(?) d
+              ON d.AphiaID = l.AphiaID AND d.h3 = l.h3
+            """,
+            [DENSITY_PATH],
+        ).fetchall()
+    finally:
+        conn.execute("DROP TABLE IF EXISTS _density_lookups")
+
+    out: Dict[Tuple[int, int], float] = {}
+    for aphiaid, h3_cell, density_u16 in rows:
+        if density_u16 is None:
+            continue
+        out[(int(aphiaid), int(h3_cell))] = decode_density(density_u16)
+    return out
+
+
+def preload_profiles(aphiaids: List[int]) -> None:
+    """Warm the profile cache for many AphiaIDs in one parquet read."""
+    aids = sorted({int(a) for a in aphiaids if a is not None})
+    if not aids:
+        return
+    if not os.path.isfile(THERMAL_PROFILES_PATH):
+        raise FileNotFoundError(f"Thermal profiles not found: {THERMAL_PROFILES_PATH}")
+
+    missing = [aid for aid in aids if aid not in _profile_cache]
+    if not missing:
+        return
+
+    table = pq.read_table(
+        THERMAL_PROFILES_PATH,
+        filters=[("AphiaID", "in", missing)],
+        columns=["AphiaID", "bandwidth", "temps", "norm_max"],
+    )
+    found = set()
+    if table.num_rows:
+        data = table.to_pydict()
+        with _profile_lock:
+            for i, aid in enumerate(data["AphiaID"]):
+                aid_i = int(aid)
+                found.add(aid_i)
+                _profile_cache[aid_i] = {
+                    "temps": np.asarray(data["temps"][i], dtype=np.float64),
+                    "bandwidth": float(data["bandwidth"][i]),
+                    "norm_max": float(data["norm_max"][i]),
+                }
+
+    with _profile_lock:
+        for aid in missing:
+            if aid not in found:
+                _profile_cache[aid] = None
+
+
+def latlng_to_h3_int(lat: float, lon: float) -> int:
+    """H3 cell as uint64 without DuckDB."""
+    return h3.str_to_int(h3.latlng_to_cell(float(lat), float(lon), H3_RESOLUTION))
 
 
 def density_rows_for_aphiaid(
