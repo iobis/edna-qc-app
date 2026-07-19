@@ -91,8 +91,6 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
         except Exception as e:
             logger.error("Failed batched density lookup: %s", e)
             raise Exception(f"Failed batched density lookup: {e}") from e
-        finally:
-            conn.close()
         logger.info("Density lookup done: %s hits", len(density_map))
 
     if thermal_ok:

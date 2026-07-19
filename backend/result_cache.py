@@ -94,11 +94,25 @@ def get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
     return response
 
 
+def _ensure_cache_dir() -> bool:
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Cannot create result cache dir %s: %s", CACHE_DIR, exc)
+        return False
+    if not os.path.isdir(CACHE_DIR):
+        logger.warning("Result cache path is not a directory: %s", CACHE_DIR)
+        return False
+    return True
+
+
 def store_cached_response(cache_key: str, response: Dict[str, Any]) -> None:
     if CACHE_TTL_SECONDS <= 0:
         return
 
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    if not _ensure_cache_dir():
+        return
+
     path = _cache_path(cache_key)
     tmp_path = f"{path}.tmp"
 

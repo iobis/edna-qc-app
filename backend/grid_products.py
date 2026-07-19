@@ -54,6 +54,8 @@ _profile_lock = threading.Lock()
 _profile_cache: Dict[int, Optional[dict]] = {}
 _suitability_lock = threading.Lock()
 _suitability_cache: Dict[int, List[Tuple[int, float]]] = {}
+_duckdb_init_lock = threading.Lock()
+_thread_local = threading.local()
 
 
 def decode_density(density_u16) -> float:
@@ -179,10 +181,37 @@ def suitability_rows_for_aphiaid(aphiaid: int) -> List[Tuple[int, float]]:
 
 
 def open_h3_connection() -> duckdb.DuckDBPyConnection:
-    conn = duckdb.connect(database=":memory:")
-    conn.execute("INSTALL h3 FROM community;")
-    conn.execute("LOAD h3;")
-    return conn
+    """Return a thread-local DuckDB connection with the h3 extension loaded."""
+    conn = getattr(_thread_local, "h3_conn", None)
+    if conn is not None:
+        return conn
+    with _duckdb_init_lock:
+        conn = getattr(_thread_local, "h3_conn", None)
+        if conn is not None:
+            return conn
+        conn = duckdb.connect(database=":memory:")
+        conn.execute("INSTALL h3 FROM community;")
+        conn.execute("LOAD h3;")
+        _thread_local.h3_conn = conn
+        logger.info("Opened thread-local DuckDB h3 connection")
+        return conn
+
+
+def open_spatial_connection() -> duckdb.DuckDBPyConnection:
+    """Return a thread-local DuckDB connection with the spatial extension loaded."""
+    conn = getattr(_thread_local, "spatial_conn", None)
+    if conn is not None:
+        return conn
+    with _duckdb_init_lock:
+        conn = getattr(_thread_local, "spatial_conn", None)
+        if conn is not None:
+            return conn
+        conn = duckdb.connect(database=":memory:")
+        conn.execute("INSTALL spatial;")
+        conn.execute("LOAD spatial;")
+        _thread_local.spatial_conn = conn
+        logger.info("Opened thread-local DuckDB spatial connection")
+        return conn
 
 
 def latlng_to_h3(conn: duckdb.DuckDBPyConnection, lat: float, lon: float) -> int:
