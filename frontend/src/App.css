@@ -49,6 +49,11 @@ body {
   color: var(--text);
 }
 
+.header-home {
+  color: inherit;
+  text-decoration: none;
+}
+
 .header p {
   margin: 0;
   max-width: none;

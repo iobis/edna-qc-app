@@ -554,7 +554,11 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Geographic outlier detection</h1>
+        <h1>
+          <a href="/" className="header-home">
+            Geographic outlier detection
+          </a>
+        </h1>
         <p>
           This app performs spatial and environmental outlier detection on species occurrence data.
           Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
