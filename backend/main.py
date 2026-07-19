@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import logging
+import uuid
 import zipfile
 
 import requests
@@ -172,8 +173,9 @@ async def create_analysis_job(
             content=job_to_api_response(existing),
         )
 
-    job_id = create_job(cache_key, file_infos)
+    job_id = str(uuid.uuid4())
     save_job_input(job_id, files_data)
+    create_job(cache_key, file_infos, job_id=job_id)
     job = get_job(job_id)
     prune_expired_cache()
     prune_finished_jobs()

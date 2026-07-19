@@ -64,8 +64,13 @@ def _transaction():
         conn.close()
 
 
-def create_job(cache_key: str, file_infos: List[Dict[str, Any]]) -> str:
-    job_id = str(uuid.uuid4())
+def create_job(
+    cache_key: str,
+    file_infos: List[Dict[str, Any]],
+    job_id: Optional[str] = None,
+) -> str:
+    if not job_id:
+        job_id = str(uuid.uuid4())
     with _connect() as conn:
         conn.execute(
             """

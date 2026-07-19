@@ -222,10 +222,12 @@ def enrich_occurrences_with_event_coords(
     return enriched, stats
 
 
-def detect_delimiter(content: bytes, sample_size: int = 100) -> str:
+def detect_delimiter(content: bytes, sample_size: int = 8192) -> str:
     """
-    Detect the delimiter (comma or tab) in the file content using csv.Sniffer.
-    Raises ValueError if delimiter cannot be detected.
+    Detect the delimiter (comma or tab) in the file content.
+
+    Tries csv.Sniffer first, then falls back to counting tabs vs commas in the
+    sample. DwC-A TSV files often confuse Sniffer on short samples.
     """
     try:
         text = content.decode('utf-8')
@@ -234,15 +236,28 @@ def detect_delimiter(content: bytes, sample_size: int = 100) -> str:
             text = content.decode('latin-1')
         except UnicodeDecodeError:
             text = content.decode('utf-8', errors='ignore')
-    
+
     sample = text[:sample_size] if len(text) > sample_size else text
-    
+    if not sample.strip():
+        raise ValueError("Could not detect delimiter (comma or tab) in file: empty content")
+
     sniffer = csv.Sniffer()
     try:
-        delimiter = sniffer.sniff(sample, delimiters='\t,').delimiter
-        return delimiter
-    except csv.Error as e:
-        raise ValueError(f"Could not detect delimiter (comma or tab) in file: {e}")
+        return sniffer.sniff(sample, delimiters='\t,').delimiter
+    except csv.Error:
+        pass
+
+    # Fallback: prefer the delimiter that appears more often on the header /
+    # first data lines (Sniffer is unreliable on some DwC-A TSVs).
+    lines = [line for line in sample.splitlines() if line.strip()][:20]
+    probe = '\n'.join(lines) if lines else sample
+    tab_count = probe.count('\t')
+    comma_count = probe.count(',')
+    if tab_count == 0 and comma_count == 0:
+        raise ValueError(
+            "Could not detect delimiter (comma or tab) in file: Could not determine delimiter"
+        )
+    return '\t' if tab_count >= comma_count else ','
 
 
 def parse_separated_file(content: bytes, delimiter: Optional[str] = None) -> Tuple[List[Dict[str, str]], str]:
