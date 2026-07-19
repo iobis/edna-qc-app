@@ -3,6 +3,7 @@ import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
 import DensityMap from './DensityMap';
 import CoordinatePopover from './CoordinatePopover';
+import ScoreDotPlot from './ScoreDotPlot';
 import './App.css';
 
 // Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
@@ -667,6 +668,7 @@ function App() {
                   </button>
                 </div>
               </div>
+              <ScoreDotPlot occurrences={uploadResult.processing.analyzed_occurrences} />
               <div className="table-wrap">
                 <table>
                   <thead>

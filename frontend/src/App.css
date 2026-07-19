@@ -287,6 +287,81 @@ a:hover {
   letter-spacing: -0.01em;
 }
 
+.score-dotplot {
+  position: relative;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 0.75rem 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.score-dotplot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.score-dotplot-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.score-dotplot-axis {
+  stroke: #98a2b3;
+  stroke-width: 1;
+}
+
+.score-dotplot-tick {
+  fill: var(--text-muted);
+  font-size: 8px;
+}
+
+.score-dotplot-label {
+  fill: var(--text-muted);
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.score-dotplot-point {
+  fill-opacity: 0.75;
+  stroke-opacity: 0.95;
+  stroke-width: 1;
+  cursor: default;
+}
+
+.score-dotplot-point.is-active {
+  fill-opacity: 1;
+  stroke-width: 1.5;
+}
+
+.score-dotplot-tooltip {
+  position: absolute;
+  z-index: 5;
+  max-width: 260px;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.score-dotplot-tooltip-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text);
+}
+
+.score-dotplot-tooltip-meta {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);
