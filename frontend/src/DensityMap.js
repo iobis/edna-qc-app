@@ -4,7 +4,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAP_GEOMETRY_VERSION = 7;
+const MAP_GEOMETRY_VERSION = 8;
 
 const COASTLINES_LAYER = {
   id: 'coastlines',

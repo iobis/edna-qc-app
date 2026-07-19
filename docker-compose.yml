@@ -18,14 +18,18 @@ services:
       - "8000"
     volumes:
       - ./backend:/app
-      - ./data/parquet:/data/parquet
+      - ./data/density:/data/density
+      - ./data/thermal:/data/thermal
       - ./data/speciesgrids:/data/speciesgrids
       - ./data/cache:/data/cache
       - ./data/jobs:/data/jobs
     environment:
       - PYTHONUNBUFFERED=1
-      - SPEEDY_DATA_DIR=/data/parquet
+      - DENSITY_PATH=/data/density/data.parquet
+      - THERMAL_THETAO_PATH=/data/thermal/thetao.parquet
+      - THERMAL_PROFILES_PATH=/data/thermal/profiles.parquet
       - SPECIESGRIDS_DIR=/data/speciesgrids
+      - SPECIESGRIDS_PATH=/data/speciesgrids/data.parquet
       - RESULT_CACHE_DIR=/data/cache
       - RESULT_CACHE_TTL_SECONDS=86400
       - JOBS_DIR=/data/jobs
@@ -40,14 +44,18 @@ services:
     command: python worker.py
     volumes:
       - ./backend:/app
-      - ./data/parquet:/data/parquet
+      - ./data/density:/data/density
+      - ./data/thermal:/data/thermal
       - ./data/speciesgrids:/data/speciesgrids
       - ./data/cache:/data/cache
       - ./data/jobs:/data/jobs
     environment:
       - PYTHONUNBUFFERED=1
-      - SPEEDY_DATA_DIR=/data/parquet
+      - DENSITY_PATH=/data/density/data.parquet
+      - THERMAL_THETAO_PATH=/data/thermal/thetao.parquet
+      - THERMAL_PROFILES_PATH=/data/thermal/profiles.parquet
       - SPECIESGRIDS_DIR=/data/speciesgrids
+      - SPECIESGRIDS_PATH=/data/speciesgrids/data.parquet
       - RESULT_CACHE_DIR=/data/cache
       - RESULT_CACHE_TTL_SECONDS=86400
       - JOBS_DIR=/data/jobs

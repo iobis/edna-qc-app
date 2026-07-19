@@ -1,61 +1,56 @@
 from typing import List, Dict
-import os
 import logging
 
-import duckdb
+from grid_products import (
+    density_at_cell,
+    density_path_ok,
+    DENSITY_PATH,
+    H3_RESOLUTION,
+    latlng_to_h3,
+    open_h3_connection,
+    suitability_at_cell,
+    thermal_paths_ok,
+    THERMAL_PROFILES_PATH,
+    THERMAL_THETAO_PATH,
+)
 
-
-SPEEDY_DATA_DIR = os.environ.get("SPEEDY_DATA_DIR", "/data/parquet")
-SPEEDY_RESOLUTION = 3
+# Re-export for callers that still import these names.
+SPEEDY_RESOLUTION = H3_RESOLUTION
+SPEEDY_DATA_DIR = DENSITY_PATH
 
 logger = logging.getLogger(__name__)
 
 
 def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     """
-    Analyze species occurrences and add numeric scores.
+    Attach density and thermal suitability scores to each occurrence.
 
-    For each occurrence, this function looks for a Parquet file in
-    the SPEEDY data directory with the name "{aphiaid}.parquet" and
-    runs the query:
-
-        INSTALL h3 FROM community;
-        LOAD h3;
-        SELECT density, suitability
-        FROM read_parquet('{file_path}')
-        WHERE h3 = h3_latlng_to_cell_string(lat, lon, SPEEDY_RESOLUTION)
-
-    The score is currently taken to be the suitability value.
-    Both density and suitability are attached to the occurrence.
-    
-    Raises:
-        Exception: If database connection or query execution fails
+    Density comes from build/density_3 (uint16 / 65535). Suitability is
+    evaluated on the fly from thermal_3 thetao + species KDE profiles.
+    The score is the suitability value.
     """
     if not occurrences:
         return occurrences
 
-    if not os.path.isdir(SPEEDY_DATA_DIR):
-        logger.warning("SPEEDY data directory not found: %s", SPEEDY_DATA_DIR)
+    density_ok = density_path_ok()
+    thermal_ok = thermal_paths_ok()
+    if not density_ok:
+        logger.warning("Density product not found: %s", DENSITY_PATH)
+    if not thermal_ok:
+        logger.warning(
+            "Thermal products missing (thetao=%s, profiles=%s)",
+            THERMAL_THETAO_PATH,
+            THERMAL_PROFILES_PATH,
+        )
+    if not density_ok and not thermal_ok:
         return occurrences
 
-    parquet_files = [
-        name for name in os.listdir(SPEEDY_DATA_DIR)
-        if name.endswith(".parquet") and os.path.isfile(os.path.join(SPEEDY_DATA_DIR, name))
-    ]
-    if not parquet_files:
-        logger.warning("No parquet files found in SPEEDY data directory: %s", SPEEDY_DATA_DIR)
-
-    missing_parquet = 0
+    missing_density = 0
+    missing_profile = 0
     scored = 0
+    kde_cache: dict = {}
 
-    conn = duckdb.connect(database=":memory:")
-    try:
-        conn.execute("INSTALL h3 FROM community;")
-        conn.execute("LOAD h3;")
-    except Exception as e:
-        conn.close()
-        raise Exception(f"Failed to install or load h3 extension: {e}")
-
+    conn = open_h3_connection()
     try:
         for occurrence in occurrences:
             aphiaid = occurrence.get("aphiaid")
@@ -69,42 +64,49 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
             if not aphiaid or lon is None or lat is None:
                 continue
 
-            file_path = os.path.join(SPEEDY_DATA_DIR, f"{aphiaid}.parquet")
-            if not os.path.exists(file_path):
-                missing_parquet += 1
-                continue
-
             try:
-                result = conn.execute(
-                    """
-                    SELECT density, suitability
-                    FROM read_parquet(?)
-                    WHERE h3 = h3_latlng_to_cell_string(?, ?, ?)
-                    """,
-                    [file_path, float(lat), float(lon), SPEEDY_RESOLUTION],
-                ).fetchone()
+                h3_cell = latlng_to_h3(conn, float(lat), float(lon))
             except Exception as e:
-                logger.error(f"Failed to query parquet file {file_path} for occurrence: {e}")
-                raise Exception(f"Failed to query parquet file {file_path}: {e}")
+                logger.error("Failed to compute H3 cell for occurrence: %s", e)
+                raise Exception(f"Failed to compute H3 cell: {e}") from e
 
-            if result is None:
-                continue
+            if density_ok:
+                try:
+                    density = density_at_cell(conn, int(aphiaid), h3_cell)
+                except Exception as e:
+                    logger.error("Failed density lookup for AphiaID %s: %s", aphiaid, e)
+                    raise Exception(f"Failed density lookup for AphiaID {aphiaid}: {e}") from e
+                if density is None:
+                    missing_density += 1
+                occurrence["density"] = density
 
-            density, suitability = result
-            occurrence["density"] = density
-            occurrence["suitability"] = suitability
-            occurrence["score"] = suitability
-            scored += 1
+            if thermal_ok:
+                try:
+                    suitability = suitability_at_cell(int(aphiaid), h3_cell, kde_cache=kde_cache)
+                except FileNotFoundError:
+                    raise
+                except Exception as e:
+                    logger.error("Failed suitability lookup for AphiaID %s: %s", aphiaid, e)
+                    raise Exception(
+                        f"Failed suitability lookup for AphiaID {aphiaid}: {e}"
+                    ) from e
+                if suitability is None:
+                    missing_profile += 1
+                else:
+                    occurrence["suitability"] = suitability
+                    occurrence["score"] = suitability
+                    scored += 1
     finally:
         conn.close()
 
-    if missing_parquet:
-        logger.info(
-            "SPEEDY lookup: %s scored, %s without parquet file in %s",
-            scored,
-            missing_parquet,
-            SPEEDY_DATA_DIR,
-        )
+    logger.info(
+        "Grid lookup: %s scored, %s without density cell, %s without thermal profile "
+        "(density=%s, thermal=%s)",
+        scored,
+        missing_density,
+        missing_profile,
+        DENSITY_PATH,
+        THERMAL_PROFILES_PATH,
+    )
 
     return occurrences
-

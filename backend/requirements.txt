@@ -5,4 +5,7 @@ duckdb==1.1.3
 requests==2.31.0
 h3==4.2.1
 antimeridian==0.4.8
+numpy==2.2.6
+scipy==1.15.3
+pyarrow==20.0.0
 

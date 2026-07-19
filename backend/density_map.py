@@ -8,7 +8,15 @@ import antimeridian
 import duckdb
 import h3
 
-from analysis import SPEEDY_DATA_DIR, SPEEDY_RESOLUTION
+from grid_products import (
+    DENSITY_PATH,
+    density_rows_for_aphiaid,
+    has_density_for_aphiaid,
+    h3_to_str,
+    latlng_to_h3,
+    open_h3_connection,
+    suitability_rows_for_aphiaid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +25,10 @@ _DEFAULT_SPECIESGRIDS = os.path.join(
     "data",
     "speciesgrids",
 )
+SPECIESGRIDS_PATH = os.environ.get("SPECIESGRIDS_PATH")
 SPECIESGRIDS_DIR = os.environ.get(
     "SPECIESGRIDS_DIR",
-    "/data/speciesgrids" if os.path.isdir("/data/speciesgrids") else _DEFAULT_SPECIESGRIDS,
+    "/data/speciesgrids" if os.path.exists("/data/speciesgrids") else _DEFAULT_SPECIESGRIDS,
 )
 DENSITY_MAP_MIN_DENSITY = float(os.environ.get("DENSITY_MAP_MIN_DENSITY", "0.08"))
 DENSITY_MAP_MIN_SUITABILITY = float(os.environ.get("DENSITY_MAP_MIN_SUITABILITY", "0.08"))
@@ -57,18 +66,14 @@ def _build_h3_features(
     if not rows:
         return []
 
-    h3_indices = [row[0] for row in rows]
-    values = [row[1] for row in rows]
-
-    geometries: List[dict] = []
-    for h3_index in h3_indices:
-        boundary = h3.cell_to_boundary(h3_index)
+    features: List[dict] = []
+    for h3_index, value in rows:
+        h3_str = h3_to_str(h3_index) if not isinstance(h3_index, str) else h3_index
+        boundary = h3.cell_to_boundary(h3_str)
         ring = [[lng, lat] for lat, lng in boundary]
         ring.append(ring[0])
-        geometries.append({"type": "Polygon", "coordinates": [ring]})
+        geometry = {"type": "Polygon", "coordinates": [ring]}
 
-    features: List[dict] = []
-    for h3_index, value, geometry in zip(h3_indices, values, geometries):
         if not _geometry_is_valid(geometry):
             fixed = antimeridian.fix_geojson(geometry)
             if not _geometry_is_valid(fixed):
@@ -80,9 +85,9 @@ def _build_h3_features(
                 "type": "Feature",
                 "geometry": geometry,
                 "properties": {
-                    "h3": h3_index,
+                    "h3": h3_str,
                     value_property: _sanitize(value),
-                    "is_occurrence": h3_index == occurrence_h3 if occurrence_h3 else False,
+                    "is_occurrence": h3_str == occurrence_h3 if occurrence_h3 else False,
                 },
             }
         )
@@ -91,24 +96,43 @@ def _build_h3_features(
 
 
 def _speciesgrids_parquet_paths() -> List[str]:
-    if not os.path.isdir(SPECIESGRIDS_DIR):
-        raise FileNotFoundError(f"Species grids directory not found: {SPECIESGRIDS_DIR}")
+    """
+    Resolve speciesgrids parquet input.
 
-    paths: List[str] = []
-    for root, _, files in os.walk(SPECIESGRIDS_DIR):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.isfile(path):
-                paths.append(path)
+    Supports:
+    - SPECIESGRIDS_PATH pointing at a single .parquet file
+    - SPECIESGRIDS_DIR / SPECIESGRIDS_PATH pointing at a directory of parquet files
+    """
+    candidates = [SPECIESGRIDS_PATH, SPECIESGRIDS_DIR]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if os.path.isfile(candidate) and candidate.lower().endswith(".parquet"):
+            return [candidate]
+        if os.path.isdir(candidate):
+            paths: List[str] = []
+            for root, _, files in os.walk(candidate):
+                for name in files:
+                    path = os.path.join(root, name)
+                    if os.path.isfile(path) and name.lower().endswith(".parquet"):
+                        paths.append(path)
+            if paths:
+                return sorted(paths)
 
-    if not paths:
-        raise FileNotFoundError(f"No species grid files found in {SPECIESGRIDS_DIR}")
-
-    return sorted(paths)
+    raise FileNotFoundError(
+        "No speciesgrids parquet found. Set SPECIESGRIDS_PATH to a .parquet file "
+        f"or SPECIESGRIDS_DIR to a directory (tried PATH={SPECIESGRIDS_PATH!r}, "
+        f"DIR={SPECIESGRIDS_DIR!r})."
+    )
 
 
 def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
     parquet_paths = _speciesgrids_parquet_paths()
+    logger.info(
+        "Loading speciesgrids records for AphiaID %s from %d parquet file(s)",
+        aphiaid,
+        len(parquet_paths),
+    )
 
     conn = duckdb.connect(database=":memory:")
     try:
@@ -126,7 +150,7 @@ def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
             FROM read_parquet(?)
             WHERE AphiaID = ?
             """,
-            [parquet_paths, aphiaid],
+            [parquet_paths if len(parquet_paths) > 1 else parquet_paths[0], aphiaid],
         ).fetchall()
     finally:
         conn.close()
@@ -154,44 +178,29 @@ def get_density_geojson(
     lon: Optional[float] = None,
     lat: Optional[float] = None,
 ) -> dict:
-    file_path = os.path.join(SPEEDY_DATA_DIR, f"{aphiaid}.parquet")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"No density map found for AphiaID {aphiaid}")
-
-    conn = duckdb.connect(database=":memory:")
+    conn = open_h3_connection()
     try:
-        conn.execute("INSTALL h3 FROM community;")
-        conn.execute("LOAD h3;")
+        if not has_density_for_aphiaid(conn, aphiaid):
+            raise FileNotFoundError(
+                f"No density map found for AphiaID {aphiaid} in {DENSITY_PATH}"
+            )
 
-        occurrence_h3 = None
+        occurrence_h3_int = None
+        occurrence_h3_str = None
         if lon is not None and lat is not None:
-            occurrence_h3 = conn.execute(
-                "SELECT h3_latlng_to_cell_string(?, ?, ?)",
-                [float(lat), float(lon), SPEEDY_RESOLUTION],
-            ).fetchone()[0]
+            occurrence_h3_int = latlng_to_h3(conn, float(lat), float(lon))
+            occurrence_h3_str = h3_to_str(occurrence_h3_int)
 
-        if occurrence_h3 is not None:
-            rows = conn.execute(
-                """
-                SELECT h3, density
-                FROM read_parquet(?)
-                WHERE density >= ? OR h3 = ?
-                """,
-                [file_path, DENSITY_MAP_MIN_DENSITY, occurrence_h3],
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT h3, density
-                FROM read_parquet(?)
-                WHERE density >= ?
-                """,
-                [file_path, DENSITY_MAP_MIN_DENSITY],
-            ).fetchall()
+        rows = density_rows_for_aphiaid(
+            conn,
+            aphiaid,
+            DENSITY_MAP_MIN_DENSITY,
+            occurrence_h3=occurrence_h3_int,
+        )
     finally:
         conn.close()
 
-    features = _build_h3_features(rows, "density", occurrence_h3=occurrence_h3)
+    features = _build_h3_features(rows, "density", occurrence_h3=occurrence_h3_str)
 
     return {
         "type": "FeatureCollection",
@@ -205,44 +214,27 @@ def get_suitability_geojson(
     lon: Optional[float] = None,
     lat: Optional[float] = None,
 ) -> dict:
-    file_path = os.path.join(SPEEDY_DATA_DIR, f"{aphiaid}.parquet")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"No suitability map found for AphiaID {aphiaid}")
-
-    conn = duckdb.connect(database=":memory:")
     try:
-        conn.execute("INSTALL h3 FROM community;")
-        conn.execute("LOAD h3;")
+        all_rows = suitability_rows_for_aphiaid(aphiaid)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"No suitability map found for AphiaID {aphiaid}") from e
 
-        occurrence_h3 = None
-        if lon is not None and lat is not None:
-            occurrence_h3 = conn.execute(
-                "SELECT h3_latlng_to_cell_string(?, ?, ?)",
-                [float(lat), float(lon), SPEEDY_RESOLUTION],
-            ).fetchone()[0]
+    occurrence_h3_str = None
+    if lon is not None and lat is not None:
+        conn = open_h3_connection()
+        try:
+            occurrence_h3_str = h3_to_str(latlng_to_h3(conn, float(lat), float(lon)))
+        finally:
+            conn.close()
 
-        if occurrence_h3 is not None:
-            rows = conn.execute(
-                """
-                SELECT h3, suitability
-                FROM read_parquet(?)
-                WHERE suitability >= ? OR h3 = ?
-                """,
-                [file_path, DENSITY_MAP_MIN_SUITABILITY, occurrence_h3],
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT h3, suitability
-                FROM read_parquet(?)
-                WHERE suitability >= ?
-                """,
-                [file_path, DENSITY_MAP_MIN_SUITABILITY],
-            ).fetchall()
-    finally:
-        conn.close()
+    rows = [
+        (h3_cell, value)
+        for h3_cell, value in all_rows
+        if value >= DENSITY_MAP_MIN_SUITABILITY
+        or (occurrence_h3_str is not None and h3_to_str(h3_cell) == occurrence_h3_str)
+    ]
 
-    features = _build_h3_features(rows, "suitability", occurrence_h3=occurrence_h3)
+    features = _build_h3_features(rows, "suitability", occurrence_h3=occurrence_h3_str)
 
     return {
         "type": "FeatureCollection",
