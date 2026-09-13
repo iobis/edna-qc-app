@@ -11,7 +11,7 @@ import './App.css';
 const API_URL = process.env.REACT_APP_API_URL || '';
 const MAP_GEOMETRY_VERSION = 8;
 
-const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip'];
+const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip', '.xlsx'];
 
 const getBadgeStyle = (value, colorScale) => {
   const numValue = parseFloat(value) || 0;
@@ -563,7 +563,8 @@ function App() {
         <p>
           This app performs spatial and environmental outlier detection on species occurrence data.
           Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
-          Datasets should include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns.
+          Wilderlab sample-batch <code className="dwca-term">.xlsx</code> exports are also supported (sheets <code className="dwca-term">metadata</code>, <code className="dwca-term">aggregated</code>, and optionally <code className="dwca-term">full</code>).
+          Datasets should include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns (for Wilderlab, coordinates come from the metadata sample table).
           For Event Core archives, coordinates may live on the event table (or parent events via <code className="dwca-term">parentEventID</code>) and are inherited when the occurrence lacks them.
           If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
           Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
@@ -587,7 +588,7 @@ function App() {
               type="file"
               className="form-input"
               multiple
-              accept=".txt,.csv,.tsv,.zip"
+              accept=".txt,.csv,.tsv,.zip,.xlsx"
               onChange={handleFileChange}
               disabled={loading}
             />

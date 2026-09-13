@@ -9,7 +9,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 ALLOWED_TEXT_EXTENSIONS = {".txt", ".csv", ".tsv"}
-ALLOWED_EXTENSIONS = ALLOWED_TEXT_EXTENSIONS | {".zip"}
+ALLOWED_EXCEL_EXTENSIONS = {".xlsx"}
+ALLOWED_EXTENSIONS = ALLOWED_TEXT_EXTENSIONS | ALLOWED_EXCEL_EXTENSIONS | {".zip"}
 
 
 def extract_text_files_from_zip(zip_content: bytes, source_name: str = "zip file") -> List[Dict]:

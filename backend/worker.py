@@ -5,6 +5,7 @@ from job_storage import cleanup_job_input, load_job_input, save_job_input
 from job_store import claim_next_job, init_db, mark_completed, mark_failed, prune_finished_jobs
 from parsing import process_uploaded_files
 from result_cache import get_cached_response, prune_expired_cache, store_cached_response
+from wilderlab import find_wilderlab_xlsx_files, process_wilderlab_files
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +30,21 @@ def process_job(job: dict) -> None:
 
     try:
         files_data = load_job_input(job_id)
-        processing_result = process_uploaded_files(files_data)
+        wilderlab_files = find_wilderlab_xlsx_files(files_data)
+        if wilderlab_files:
+            processing_result = process_wilderlab_files(files_data)
+        else:
+            xlsx_files = [
+                f["filename"]
+                for f in files_data
+                if f.get("filename", "").lower().endswith(".xlsx")
+            ]
+            if xlsx_files:
+                raise ValueError(
+                    "Unsupported Excel file(s). Only Wilderlab sample-batch XLSX "
+                    f"exports are supported. Rejected: {', '.join(xlsx_files)}"
+                )
+            processing_result = process_uploaded_files(files_data)
         response = {
             "files_received": len(file_infos),
             "files": file_infos,

@@ -8,4 +8,5 @@ antimeridian==0.4.8
 numpy==2.2.6
 scipy==1.15.3
 pyarrow==20.0.0
+python-calamine==0.8.2
 
