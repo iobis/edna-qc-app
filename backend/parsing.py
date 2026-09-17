@@ -68,19 +68,115 @@ def find_dna_derived_data_file(filenames: List[str]) -> Optional[str]:
     return None
 
 
-def build_dna_sequence_index(dna_rows: List[Dict]) -> Dict[str, str]:
-    """
-    Build first-sequence-wins index by occurrenceID.
+def _markers_from_flat_fields(row: Dict) -> Dict[str, str]:
+    """Build gene -> sequence map from flat DNA_sequence / target_gene fields."""
+    sequence = _cell_value(row, 'DNA_sequence')
+    target_gene = _cell_value(row, 'target_gene')
+    if not sequence and not target_gene:
+        return {}
+    # Flat target_gene may already be a joined display string; only trust it when
+    # it looks like a single gene token (no comma). Prefer dna_markers when present.
+    if ',' in target_gene:
+        target_gene = ''
+        if not sequence:
+            return {}
+    return {target_gene: sequence}
 
-    Only rows with a non-empty DNA_sequence and occurrenceID are indexed.
+
+def _markers_from_row(row: Dict) -> Dict[str, str]:
+    """Prefer structured dna_markers; fall back to flat DNA fields."""
+    listed = _markers_from_list(row.get('dna_markers'))
+    if listed:
+        return listed
+    return _markers_from_flat_fields(row)
+
+
+def _markers_from_list(markers: Optional[List]) -> Dict[str, str]:
+    """Build gene -> sequence map from a dna_markers list (first sequence wins)."""
+    result: Dict[str, str] = {}
+    if not markers:
+        return result
+    for item in markers:
+        if not isinstance(item, dict):
+            continue
+        gene = _cell_value(item, 'target_gene')
+        sequence = _cell_value(item, 'DNA_sequence')
+        if not gene and not sequence:
+            continue
+        if gene not in result:
+            result[gene] = sequence
+        elif sequence and not result[gene]:
+            result[gene] = sequence
+    return result
+
+
+def _merge_marker_maps(*maps: Dict[str, str]) -> Dict[str, str]:
+    """Merge gene -> sequence maps; first non-empty sequence per gene wins."""
+    merged: Dict[str, str] = {}
+    for marker_map in maps:
+        for gene, sequence in marker_map.items():
+            if gene not in merged:
+                merged[gene] = sequence
+            elif sequence and not merged[gene]:
+                merged[gene] = sequence
+    return merged
+
+
+def _markers_to_list(markers: Dict[str, str]) -> List[Dict[str, str]]:
+    """Stable list form for API/UI: one entry per gene (including unnamed)."""
+    items = sorted(
+        markers.items(),
+        key=lambda item: (item[0] == '', item[0].lower()),
+    )
+    return [
+        {'target_gene': gene, 'DNA_sequence': sequence}
+        for gene, sequence in items
+    ]
+
+
+def _apply_markers_to_row(row: Dict, markers: Dict[str, str]) -> None:
+    """Write dna_markers plus convenience flat fields onto an occurrence dict."""
+    if not markers:
+        row.pop('dna_markers', None)
+        return
+
+    row['dna_markers'] = _markers_to_list(markers)
+    genes = [marker['target_gene'] for marker in row['dna_markers'] if marker['target_gene']]
+    if genes:
+        row['target_gene'] = ', '.join(genes)
+    else:
+        row.pop('target_gene', None)
+    sequences = [marker['DNA_sequence'] for marker in row['dna_markers'] if marker['DNA_sequence']]
+    if sequences:
+        row['DNA_sequence'] = sequences[0]
+    else:
+        row.pop('DNA_sequence', None)
+
+
+def build_dna_sequence_index(dna_rows: List[Dict]) -> Dict[str, Dict[str, str]]:
     """
-    by_occurrence_id: Dict[str, str] = {}
+    Build DNA marker index by occurrenceID.
+
+    Each occurrenceID maps to {target_gene: DNA_sequence}, keeping the first
+    non-empty example sequence per gene. Rows without a gene use '' as the key.
+    """
+    by_occurrence_id: Dict[str, Dict[str, str]] = {}
 
     for row in dna_rows:
-        sequence = _cell_value(row, 'DNA_sequence')
         occurrence_id = _cell_value(row, 'occurrenceID')
-        if sequence and occurrence_id and occurrence_id not in by_occurrence_id:
-            by_occurrence_id[occurrence_id] = sequence
+        if not occurrence_id:
+            continue
+
+        sequence = _cell_value(row, 'DNA_sequence')
+        target_gene = _cell_value(row, 'target_gene')
+        if not sequence and not target_gene:
+            continue
+
+        markers = by_occurrence_id.setdefault(occurrence_id, {})
+        if target_gene not in markers:
+            markers[target_gene] = sequence
+        elif sequence and not markers[target_gene]:
+            markers[target_gene] = sequence
 
     return by_occurrence_id
 
@@ -90,30 +186,37 @@ def enrich_occurrences_with_dna_sequences(
     dna_rows: List[Dict],
 ) -> Tuple[List[Dict], Dict]:
     """
-    Attach at most one DNA_sequence to each occurrence row, joined on occurrenceID.
+    Attach DNA markers (target_gene + example DNA_sequence) joined on occurrenceID.
+
+    Multiple DNADerivedData rows for the same occurrence are collected: one example
+    sequence per distinct target_gene. Existing values on the occurrence row are kept.
     """
     by_occurrence_id = build_dna_sequence_index(dna_rows)
     enriched: List[Dict] = []
     joined_count = 0
+    target_gene_joined_count = 0
 
     for row in occurrence_rows:
         new_row = dict(row)
-        if _cell_value(new_row, 'DNA_sequence'):
-            enriched.append(new_row)
-            joined_count += 1
-            continue
-
         occurrence_id = _cell_value(new_row, 'occurrenceID')
-        sequence = by_occurrence_id.get(occurrence_id, '') if occurrence_id else ''
+        dna_markers = by_occurrence_id.get(occurrence_id, {}) if occurrence_id else {}
 
-        if sequence:
-            new_row['DNA_sequence'] = sequence
+        markers = _merge_marker_maps(
+            _markers_from_row(new_row),
+            dna_markers,
+        )
+        _apply_markers_to_row(new_row, markers)
+
+        if any(seq for seq in markers.values()):
             joined_count += 1
+        if any(gene for gene in markers):
+            target_gene_joined_count += 1
 
         enriched.append(new_row)
 
     stats = {
         'dna_sequence_joined_count': joined_count,
+        'target_gene_joined_count': target_gene_joined_count,
         'dna_row_count': len(dna_rows),
         'dna_occurrence_id_count': len(by_occurrence_id),
     }
@@ -366,7 +469,7 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
             aphiaid = int(aphiaid_match.group(1)) if aphiaid_match else None
         
         key = (scientific_name, scientific_name_id, lon, lat)
-        dna_sequence = _cell_value(row, 'DNA_sequence')
+        row_markers = _markers_from_row(row)
         
         if key not in unique_occurrences:
             footprint_wkt = None
@@ -389,11 +492,12 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
             }
             if rank:
                 unique_occurrences[key]['rank'] = rank
-            if dna_sequence:
-                unique_occurrences[key]['DNA_sequence'] = dna_sequence
-        elif dna_sequence and not unique_occurrences[key].get('DNA_sequence'):
-            # At most one sequence per species-level detection; fill if still missing
-            unique_occurrences[key]['DNA_sequence'] = dna_sequence
+            _apply_markers_to_row(unique_occurrences[key], row_markers)
+        else:
+            # Keep one row per species/location; collect one example sequence per gene
+            existing = unique_occurrences[key]
+            merged = _merge_marker_maps(_markers_from_row(existing), row_markers)
+            _apply_markers_to_row(existing, merged)
     
     return list(unique_occurrences.values())
 
@@ -629,7 +733,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
             event_filename,
         )
 
-    # DNADerivedData: attach at most one DNA_sequence per occurrence row
+    # DNADerivedData: attach DNA_sequence / target_gene per occurrence row
     if dna_filename:
         dna_file = next(
             (f for f in files_data if f['filename'] == dna_filename),
@@ -637,20 +741,26 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
         )
         if dna_file:
             dna_rows, _ = parse_separated_file(dna_file['content'])
-            if dna_rows and 'DNA_sequence' in dna_rows[0]:
-                if 'occurrenceID' in dna_rows[0]:
+            dna_headers = dna_rows[0].keys() if dna_rows else []
+            has_dna_fields = (
+                'DNA_sequence' in dna_headers or 'target_gene' in dna_headers
+            )
+            if dna_rows and has_dna_fields:
+                if 'occurrenceID' in dna_headers:
                     parsed, dna_stats = enrich_occurrences_with_dna_sequences(
                         parsed, dna_rows
                     )
                     result['dna_joined'] = True
-                    result['dna_columns'] = list(dna_rows[0].keys())
+                    result['dna_columns'] = list(dna_headers)
                     result['columns'] = list(parsed[0].keys())
                     result['parsed_data'] = parsed[:10]
                     result.update(dna_stats)
                     logger.info(
-                        "DNADerivedData join: %d DNA rows, sequences attached to %d occurrences",
+                        "DNADerivedData join: %d DNA rows, sequences on %d occurrences, "
+                        "target_gene on %d occurrences",
                         dna_stats['dna_row_count'],
                         dna_stats['dna_sequence_joined_count'],
+                        dna_stats['target_gene_joined_count'],
                     )
                 else:
                     logger.warning(
@@ -659,7 +769,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
                     )
             else:
                 logger.warning(
-                    "DNA file '%s' found but missing DNA_sequence column; skipping join",
+                    "DNA file '%s' found but missing DNA_sequence and target_gene; skipping join",
                     dna_filename,
                 )
 

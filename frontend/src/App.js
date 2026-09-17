@@ -86,7 +86,7 @@ function CheckIcon() {
   );
 }
 
-function SequenceBlock({ sequence }) {
+function SequenceBlock({ sequence, gene }) {
   const [copied, setCopied] = useState(false);
   const timeoutRef = useRef(null);
 
@@ -119,11 +119,13 @@ function SequenceBlock({ sequence }) {
   const blastUrl =
     `https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&QUERY=${encodeURIComponent(sequence)}`;
 
+  const title = gene ? `DNA sequence (${gene})` : 'DNA sequence';
+
   return (
     <div className="expand-sequence">
       <div className="expand-sequence-header">
         <div className="expand-sequence-title">
-          <span>DNA sequence</span>
+          <span>{title}</span>
           <a
             className="sequence-blast-btn"
             href={blastUrl}
@@ -148,6 +150,24 @@ function SequenceBlock({ sequence }) {
       <pre className="expand-sequence-body">{sequence}</pre>
     </div>
   );
+}
+
+function SequenceBlocks({ occurrence }) {
+  const markers = Array.isArray(occurrence?.dna_markers)
+    ? occurrence.dna_markers.filter((marker) => marker?.DNA_sequence)
+    : [];
+
+  if (markers.length > 0) {
+    return markers.map((marker, index) => (
+      <SequenceBlock
+        key={`${marker.target_gene || 'sequence'}-${index}`}
+        sequence={marker.DNA_sequence}
+        gene={marker.target_gene || undefined}
+      />
+    ));
+  }
+
+  return <SequenceBlock sequence={occurrence?.DNA_sequence} />;
 }
 
 function syncUrlQueryParam(value) {
@@ -193,7 +213,7 @@ function App() {
     return `${aphiaid}|${lon}|${lat}`;
   };
 
-  const COLUMN_COUNT = 9;
+  const COLUMN_COUNT = 10;
 
   useEffect(() => {
     try {
@@ -678,6 +698,7 @@ function App() {
                       <th>Species</th>
                       <th>Phylum</th>
                       <th>Class</th>
+                      <th>Target gene</th>
                       <th>Coordinates</th>
                       <th>Density</th>
                       <th>Suitability</th>
@@ -733,6 +754,7 @@ function App() {
                             </td>
                             <td>{occurrence.phylum || <span className="empty-cell">—</span>}</td>
                             <td>{occurrence.class || <span className="empty-cell">—</span>}</td>
+                            <td>{occurrence.target_gene || <span className="empty-cell">—</span>}</td>
                             <td>
                               {occurrence.decimalLongitude != null && occurrence.decimalLatitude != null ? (
                                 <CoordinatePopover
@@ -788,7 +810,7 @@ function App() {
                           {isExpanded && (
                             <tr className="expand-row">
                               <td colSpan={COLUMN_COUNT}>
-                                <SequenceBlock sequence={occurrence.DNA_sequence} />
+                                <SequenceBlocks occurrence={occurrence} />
                                 {mapLoading === rowKey && (
                                   <div className="density-map-loading">
                                     <div className="spinner" role="status" aria-label="Loading map" />

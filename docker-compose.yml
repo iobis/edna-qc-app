@@ -38,7 +38,7 @@ services:
       - JOB_FAILED_TTL_SECONDS=86400
       - DENSITY_MAP_MIN_DENSITY=0.08
       - DENSITY_MAP_MIN_SUITABILITY=0.08
-      - RESULT_CACHE_VERSION=3
+      - RESULT_CACHE_VERSION=5
 
   worker:
     build: ./backend
@@ -66,7 +66,7 @@ services:
       - DENSITY_MAP_MIN_DENSITY=0.08
       - DENSITY_MAP_MIN_SUITABILITY=0.08
       - WORKER_POLL_INTERVAL_SECONDS=1
-      - RESULT_CACHE_VERSION=3
+      - RESULT_CACHE_VERSION=5
     depends_on:
       - backend
     restart: unless-stopped
