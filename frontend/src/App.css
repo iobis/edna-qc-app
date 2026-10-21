@@ -722,6 +722,80 @@ td.species {
   opacity: 0.75;
 }
 
+.congener-note {
+  margin: 0.55rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.congener-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin: 0.45rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.congener-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.congener-legend em {
+  font-style: italic;
+}
+
+.congener-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.congener-popover {
+  position: fixed;
+  z-index: 1000;
+  max-width: 260px;
+  padding: 0.4rem 0.6rem;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+
+.congener-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.congener-popover-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+
+.congener-popover-list em {
+  font-style: italic;
+}
+
+.congener-popover-swatch {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
 .density-map {
   width: 100%;
   height: 360px;

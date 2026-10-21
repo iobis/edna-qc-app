@@ -1,15 +1,19 @@
 from typing import List, Optional, Tuple
+import hashlib
 import json
 import logging
 import math
 import os
 import threading
+import time
 
 import antimeridian
 import h3
 
 from grid_products import (
     DENSITY_PATH,
+    DENSITY_SCALE,
+    density_path_ok,
     density_rows_for_aphiaid,
     h3_to_str,
     latlng_to_h3_int,
@@ -17,7 +21,14 @@ from grid_products import (
     open_spatial_connection,
     suitability_rows_for_aphiaid,
 )
-from map_cache import apply_occurrence_flag, get_cached_map, store_cached_map
+from map_cache import (
+    MAP_CACHE_VERSION,
+    apply_occurrence_flag,
+    get_cached_json,
+    get_cached_map,
+    store_cached_json,
+    store_cached_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +44,49 @@ SPECIESGRIDS_DIR = os.environ.get(
 )
 DENSITY_MAP_MIN_DENSITY = float(os.environ.get("DENSITY_MAP_MIN_DENSITY", "0.08"))
 DENSITY_MAP_MIN_SUITABILITY = float(os.environ.get("DENSITY_MAP_MIN_SUITABILITY", "0.08"))
+CONGENER_MIN_DENSITY = float(
+    os.environ.get("CONGENER_MIN_DENSITY", str(DENSITY_MAP_MIN_DENSITY))
+)
+CONGENER_MAX_SPECIES = int(os.environ.get("CONGENER_MAX_SPECIES", "12"))
+CONGENER_NEAR_RINGS = int(os.environ.get("CONGENER_NEAR_RINGS", "2"))
+
+# Light, evenly spaced hues. A dark halo in the map keeps them readable.
+CONGENER_COLORS = [
+    "#5b9bff",
+    "#ff7d7d",
+    "#5dcc8c",
+    "#c084fc",
+    "#ffb020",
+    "#22d3ee",
+    "#fb7185",
+    "#c6e056",
+    "#fb923c",
+    "#a78bfa",
+    "#2dd4bf",
+    "#f472b6",
+]
+
+_GENUS_QUALIFIERS = {
+    "cf",
+    "aff",
+    "sp",
+    "spp",
+    "nr",
+    "var",
+    "subsp",
+    "indet",
+    "species",
+    "gen",
+    "x",
+}
 
 _h3_geometry_cache: dict = {}
 _h3_geometry_lock = threading.Lock()
 _records_memory_cache: dict = {}
 _records_memory_lock = threading.Lock()
 _RECORDS_MEMORY_MAX = 64
+_genus_roster_cache: dict = {}
+_genus_roster_lock = threading.Lock()
 
 
 def _sanitize(value):
@@ -364,3 +412,417 @@ def get_suitability_geojson(
         **payload,
         "occurrence": {"lon": lon, "lat": lat} if lon is not None and lat is not None else None,
     }
+
+
+def _genus_token(scientific_name: Optional[str]) -> Optional[str]:
+    """First genus-like token in a scientific name."""
+    if not scientific_name:
+        return None
+    for raw in scientific_name.replace(",", " ").split():
+        token = raw.strip("()[]{}.;:").strip()
+        if not token:
+            continue
+        key = token.lower().rstrip(".")
+        if key in _GENUS_QUALIFIERS:
+            continue
+        if len(token) < 2:
+            continue
+        if not all(ch.isalpha() or ch == "-" for ch in token):
+            continue
+        return token
+    return None
+
+
+def _is_species_name(species: str, genus: str) -> bool:
+    parts = species.split()
+    if len(parts) < 2 or parts[0].lower() != genus.lower():
+        return False
+    epithet = parts[1].strip("()[]{}.;:").lower().rstrip(".")
+    return bool(epithet) and epithet not in _GENUS_QUALIFIERS
+
+
+def _ilike_prefix(genus: str) -> str:
+    escaped = genus.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return escaped + " %"
+
+
+def _species_name_for_aphiaid(aphiaid: int) -> Optional[str]:
+    parquet_paths = _speciesgrids_parquet_paths()
+    conn = open_spatial_connection()
+    row = conn.execute(
+        """
+        SELECT species
+        FROM read_parquet(?)
+        WHERE AphiaID = ?
+        LIMIT 1
+        """,
+        [parquet_paths if len(parquet_paths) > 1 else parquet_paths[0], int(aphiaid)],
+    ).fetchone()
+    if row is None or not row[0]:
+        return None
+    return str(row[0])
+
+
+def _genus_roster(genus: str) -> List[dict]:
+    """Distinct species whose name starts with this genus, from speciesgrids."""
+    key = genus.lower()
+    with _genus_roster_lock:
+        cached = _genus_roster_cache.get(key)
+    if cached is not None:
+        return cached
+
+    parquet_paths = _speciesgrids_parquet_paths()
+    conn = open_spatial_connection()
+    rows = conn.execute(
+        """
+        SELECT AphiaID, any_value(species) AS species, sum(records) AS records
+        FROM read_parquet(?)
+        WHERE species ILIKE ? ESCAPE '!'
+        GROUP BY AphiaID
+        """,
+        [
+            parquet_paths if len(parquet_paths) > 1 else parquet_paths[0],
+            _ilike_prefix(genus),
+        ],
+    ).fetchall()
+
+    roster = []
+    for aid, species, records in rows:
+        if not species or not _is_species_name(str(species), genus):
+            continue
+        roster.append(
+            {
+                "aphiaid": int(aid),
+                "scientificName": str(species),
+                "records": int(records or 0),
+            }
+        )
+
+    with _genus_roster_lock:
+        _genus_roster_cache[key] = roster
+    return roster
+
+
+def _density_summary(
+    aphiaids: List[int],
+    occurrence_h3: Optional[int],
+) -> dict:
+    """cell count, density at the point, and density in the nearby ring."""
+    if not aphiaids:
+        return {}
+
+    if not density_path_ok():
+        raise FileNotFoundError(f"Density product not found: {DENSITY_PATH}")
+
+    min_u16 = int(math.ceil(CONGENER_MIN_DENSITY * DENSITY_SCALE))
+    conn = open_h3_connection()
+    if occurrence_h3 is None:
+        rows = conn.execute(
+            """
+            SELECT AphiaID, count(*) AS n_cells
+            FROM read_parquet(?)
+            WHERE AphiaID IN (SELECT UNNEST(?::INTEGER[]))
+              AND density >= ?
+            GROUP BY AphiaID
+            """,
+            [DENSITY_PATH, aphiaids, min_u16],
+        ).fetchall()
+        return {
+            int(aid): {"n_cells": int(n_cells), "at": 0, "near": 0}
+            for aid, n_cells in rows
+        }
+
+    disk = [
+        h3.str_to_int(cell)
+        for cell in h3.grid_disk(h3.int_to_str(int(occurrence_h3)), CONGENER_NEAR_RINGS)
+    ]
+    rows = conn.execute(
+        """
+        SELECT
+            AphiaID,
+            count(*) AS n_cells,
+            max(CASE WHEN h3 = ? THEN density ELSE 0 END) AS at_cell,
+            max(CASE WHEN list_contains(?::UBIGINT[], h3) THEN density ELSE 0 END) AS near_cell
+        FROM read_parquet(?)
+        WHERE AphiaID IN (SELECT UNNEST(?::INTEGER[]))
+          AND density >= ?
+        GROUP BY AphiaID
+        """,
+        [int(occurrence_h3), disk, DENSITY_PATH, aphiaids, min_u16],
+    ).fetchall()
+    return {
+        int(aid): {"n_cells": int(n_cells), "at": int(at_cell or 0), "near": int(near_cell or 0)}
+        for aid, n_cells, at_cell, near_cell in rows
+    }
+
+
+def _choose_congeners(
+    species: List[dict],
+    has_location: bool,
+) -> Tuple[List[dict], str, int]:
+    """Pick which congeners to draw. Returns (chosen, selection, nearby_count)."""
+    nearby_count = sum(1 for sp in species if sp["near"] > 0)
+    if not species:
+        return [], "all", 0
+    if len(species) <= CONGENER_MAX_SPECIES:
+        chosen = list(species)
+        selection = "all"
+    elif has_location and nearby_count:
+        chosen = [sp for sp in species if sp["near"] > 0]
+        chosen.sort(key=lambda sp: (sp["at"], sp["near"], sp["records"]), reverse=True)
+        chosen = chosen[:CONGENER_MAX_SPECIES]
+        selection = "nearby"
+    else:
+        chosen = sorted(species, key=lambda sp: (sp["records"], sp["n_cells"]), reverse=True)
+        chosen = chosen[:CONGENER_MAX_SPECIES]
+        selection = "recorded"
+
+    chosen.sort(
+        key=lambda sp: (
+            sp["at"] <= 0,
+            sp["near"] <= 0,
+            sp["scientificName"].lower(),
+        )
+    )
+    return chosen, selection, nearby_count
+
+
+def _assign_congener_colors(species: List[dict]) -> None:
+    for index, sp in enumerate(species):
+        sp["color"] = CONGENER_COLORS[index % len(CONGENER_COLORS)]
+
+
+def _vertex_key(point) -> Tuple[float, float]:
+    return (round(float(point[0]), 5), round(float(point[1]), 5))
+
+
+def _split_dateline(points: List[List[float]]) -> List[List[List[float]]]:
+    """Break a line so no segment is drawn the long way across ±180°."""
+    if len(points) < 2:
+        return []
+    parts: List[List[List[float]]] = []
+    current = [[float(points[0][0]), float(points[0][1])]]
+    for raw in points[1:]:
+        lon2, lat2 = float(raw[0]), float(raw[1])
+        lon1, lat1 = current[-1]
+        dlon = lon2 - lon1
+        if abs(dlon) <= 180:
+            current.append([lon2, lat2])
+            continue
+        lon2_unwrapped = lon2 - 360.0 if dlon > 180 else lon2 + 360.0
+        if abs(lon2_unwrapped - lon1) < 1e-6:
+            current.append([lon1, lat2])
+            continue
+        boundary = 180.0 if lon2_unwrapped > lon1 else -180.0
+        span = lon2_unwrapped - lon1
+        t = (boundary - lon1) / span
+        lat_cross = lat1 + t * (lat2 - lat1)
+        current.append([boundary, lat_cross])
+        parts.append(current)
+        other = -boundary
+        current = [[other, lat_cross], [lon2, lat2]]
+    if len(current) >= 2:
+        parts.append(current)
+    return parts
+
+
+def _chain_lines(segments: List[List[List[float]]]) -> List[List[List[float]]]:
+    """Join boundary edges that share a vertex into continuous lines."""
+    adjacency: dict = {}
+    for segment in segments:
+        for start, end in zip(segment, segment[1:]):
+            start_key = _vertex_key(start)
+            end_key = _vertex_key(end)
+            if start_key == end_key:
+                continue
+            adjacency.setdefault(start_key, []).append(end_key)
+            adjacency.setdefault(end_key, []).append(start_key)
+
+    lines = []
+    for start in list(adjacency):
+        while adjacency.get(start):
+            nxt = adjacency[start].pop()
+            adjacency[nxt].remove(start)
+            path = [start, nxt]
+            cursor = nxt
+            while adjacency.get(cursor):
+                nxt = adjacency[cursor].pop()
+                adjacency[nxt].remove(cursor)
+                path.append(nxt)
+                cursor = nxt
+                if cursor == start:
+                    break
+            lines.append([[lon, lat] for lon, lat in path])
+    return lines
+
+
+def _contour_geometry(h3_ints: List[int]) -> Optional[dict]:
+    """Outline of the cells as lines, without antimeridian closure edges."""
+    if not h3_ints:
+        return None
+    cells = [h3.int_to_str(int(cell)) for cell in dict.fromkeys(h3_ints)]
+    cell_set = set(cells)
+    segments: List[List[List[float]]] = []
+    try:
+        for cell in cells:
+            for edge in h3.origin_to_directed_edges(cell):
+                neighbor = h3.get_directed_edge_destination(edge)
+                if neighbor in cell_set:
+                    continue
+                boundary = h3.directed_edge_to_boundary(edge)
+                segment = [[lng, lat] for lat, lng in boundary]
+                segments.extend(_split_dateline(segment))
+    except Exception:
+        logger.exception("Failed to build congener contour from %s cells", len(cells))
+        return None
+
+    lines = _chain_lines(segments)
+    if not lines:
+        return None
+    if len(lines) == 1:
+        return {"type": "LineString", "coordinates": lines[0]}
+    return {"type": "MultiLineString", "coordinates": lines}
+
+
+def _contour_cells(aphiaids: List[int]) -> dict:
+    min_u16 = int(math.ceil(CONGENER_MIN_DENSITY * DENSITY_SCALE))
+    conn = open_h3_connection()
+    rows = conn.execute(
+        """
+        SELECT AphiaID, h3
+        FROM read_parquet(?)
+        WHERE AphiaID IN (SELECT UNNEST(?::INTEGER[]))
+          AND density >= ?
+        """,
+        [DENSITY_PATH, aphiaids, min_u16],
+    ).fetchall()
+    grouped: dict = {}
+    for aid, cell in rows:
+        grouped.setdefault(int(aid), []).append(int(cell))
+    return grouped
+
+
+def _congener_cache_key(genus: str, aphiaid: int, occurrence_h3: Optional[int]) -> str:
+    logical = "|".join(
+        [
+            "congeners",
+            genus.lower(),
+            str(int(aphiaid)),
+            str(occurrence_h3) if occurrence_h3 is not None else "none",
+            f"{CONGENER_MIN_DENSITY:.4f}",
+            str(CONGENER_MAX_SPECIES),
+            str(CONGENER_NEAR_RINGS),
+            "colors3",
+            "lines",
+        ]
+    )
+    digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()[:20]
+    return f"congener_v{MAP_CACHE_VERSION}_{digest}"
+
+
+def _empty_congener_payload(genus: Optional[str]) -> dict:
+    return {
+        "type": "FeatureCollection",
+        "features": [],
+        "genus": genus,
+        "matched": 0,
+        "nearby": 0,
+        "shown": 0,
+        "selection": "all",
+        "cutoff": CONGENER_MIN_DENSITY,
+    }
+
+
+def get_congener_geojson(
+    aphiaid: int,
+    scientific_name: Optional[str] = None,
+    lon: Optional[float] = None,
+    lat: Optional[float] = None,
+) -> dict:
+    """Contours of congeners found by a prefix search on scientific names."""
+    aid = int(aphiaid)
+    started = time.perf_counter()
+    genus = _genus_token(scientific_name)
+    roster = _genus_roster(genus) if genus else []
+    others = [sp for sp in roster if sp["aphiaid"] != aid]
+    if not others:
+        canonical = _species_name_for_aphiaid(aid)
+        canonical_genus = _genus_token(canonical)
+        if canonical_genus and canonical_genus.lower() != (genus or "").lower():
+            genus = canonical_genus
+            roster = _genus_roster(genus)
+            others = [sp for sp in roster if sp["aphiaid"] != aid]
+
+    if not genus:
+        return _empty_congener_payload(None)
+
+    occurrence_h3 = None
+    if lon is not None and lat is not None:
+        try:
+            occurrence_h3 = latlng_to_h3_int(float(lat), float(lon))
+        except Exception:
+            logger.warning("Invalid congener map coordinates lon=%s lat=%s", lon, lat)
+
+    cache_key = _congener_cache_key(genus, aid, occurrence_h3)
+    cached = get_cached_json(cache_key)
+    if cached is not None:
+        return cached
+
+    if not others:
+        payload = _empty_congener_payload(genus)
+        store_cached_json(cache_key, payload)
+        return payload
+
+    summary = _density_summary([sp["aphiaid"] for sp in others], occurrence_h3)
+    candidates = []
+    for sp in others:
+        stats = summary.get(sp["aphiaid"])
+        if not stats or stats["n_cells"] <= 0:
+            continue
+        candidates.append({**sp, **stats})
+
+    chosen, selection, nearby_count = _choose_congeners(
+        candidates,
+        has_location=occurrence_h3 is not None,
+    )
+    _assign_congener_colors(chosen)
+    cells_by_id = _contour_cells([sp["aphiaid"] for sp in chosen]) if chosen else {}
+
+    features = []
+    for rank, sp in enumerate(chosen):
+        geometry = _contour_geometry(cells_by_id.get(sp["aphiaid"], []))
+        if geometry is None:
+            continue
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": {
+                    "aphiaid": sp["aphiaid"],
+                    "scientificName": sp["scientificName"],
+                    "color": sp["color"],
+                    "rank": rank,
+                },
+            }
+        )
+
+    payload = {
+        "type": "FeatureCollection",
+        "features": features,
+        "genus": genus,
+        "matched": len(candidates),
+        "nearby": nearby_count,
+        "shown": len(features),
+        "selection": selection if features else "all",
+        "cutoff": CONGENER_MIN_DENSITY,
+    }
+    store_cached_json(cache_key, payload)
+    logger.info(
+        "Built congener contours for %s AphiaID %s: %s of %s in %.2fs",
+        genus,
+        aid,
+        len(features),
+        len(candidates),
+        time.perf_counter() - started,
+    )
+    return payload

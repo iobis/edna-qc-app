@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -107,6 +108,15 @@ function boundsFromGeoJSON(geojson) {
   return bounds;
 }
 
+function raisePointLayers(map) {
+  if (map.getLayer('speciesgrids-records')) {
+    map.moveLayer('speciesgrids-records');
+  }
+  if (map.getLayer('occurrence-point')) {
+    map.moveLayer('occurrence-point');
+  }
+}
+
 function addRecordsLayer(map, records) {
   if (!records?.features?.length) {
     return;
@@ -129,7 +139,7 @@ function addRecordsLayer(map, records) {
       },
     });
   }
-  map.moveLayer('speciesgrids-records');
+  raisePointLayers(map);
 }
 
 function setSuitabilityLayerData(map, suitabilityGeojson, visible) {
@@ -164,9 +174,163 @@ function setSuitabilityLayerData(map, suitabilityGeojson, visible) {
     );
   }
 
-  if (map.getLayer('speciesgrids-records')) {
-    map.moveLayer('speciesgrids-records');
+  raisePointLayers(map);
+}
+
+function congenerNote(payload, hasLocation) {
+  if (!payload) {
+    return '';
   }
+  const genus = payload.genus;
+  const matched = payload.matched || 0;
+  const nearby = payload.nearby || 0;
+  const shown = payload.shown || 0;
+  if (!genus) {
+    return 'Could not read a genus from this species name.';
+  }
+  if (!matched) {
+    return `No other ${genus} species have a density contour.`;
+  }
+  if (payload.selection === 'nearby' && nearby > shown) {
+    return `Showing ${shown} of ${nearby} ${genus} species near this point.`;
+  }
+  if (payload.selection === 'nearby' && matched > shown) {
+    return `Showing ${shown} ${genus} species near this point. ${matched - shown} others in the genus have a contour.`;
+  }
+  if (payload.selection === 'recorded' && hasLocation) {
+    return `No ${genus} contour reaches this point. Showing ${shown} of ${matched} by number of records.`;
+  }
+  if (payload.selection === 'recorded') {
+    return `Showing ${shown} of ${matched} ${genus} species by number of records.`;
+  }
+  return '';
+}
+
+function setCongenerLayerData(map, payload, visible, setPopover) {
+  const data = {
+    type: 'FeatureCollection',
+    features: payload?.features || [],
+  };
+  const source = map.getSource('congeners');
+  if (source) {
+    source.setData(data);
+  } else {
+    map.addSource('congeners', { type: 'geojson', data });
+    const before = map.getLayer('occurrence-point')
+      ? 'occurrence-point'
+      : (map.getLayer('speciesgrids-records') ? 'speciesgrids-records' : undefined);
+    map.addLayer(
+      {
+        id: 'congener-casing',
+        type: 'line',
+        source: 'congeners',
+        layout: {
+          visibility: visible ? 'visible' : 'none',
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-color': 'rgba(30, 41, 59, 0.28)',
+          'line-width': 4.2,
+          'line-opacity': 1,
+        },
+      },
+      before
+    );
+    map.addLayer(
+      {
+        id: 'congener-line',
+        type: 'line',
+        source: 'congeners',
+        layout: {
+          visibility: visible ? 'visible' : 'none',
+          'line-join': 'round',
+          'line-cap': 'round',
+        },
+        paint: {
+          'line-color': ['coalesce', ['get', 'color'], '#5b9bff'],
+          'line-width': 2.4,
+          'line-opacity': 0.95,
+        },
+      },
+      before
+    );
+  }
+
+  for (const layerId of ['congener-casing', 'congener-line']) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+    }
+  }
+  raisePointLayers(map);
+  if (setPopover && map.getLayer('congener-line')) {
+    ensureCongenerPopover(map, setPopover);
+  }
+}
+
+function congenerItemsAt(map, point) {
+  const features = map.queryRenderedFeatures(point, { layers: ['congener-line'] });
+  const items = [];
+  const seen = new Set();
+  for (const feature of features) {
+    const id = String(feature.properties?.aphiaid ?? '');
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    items.push({
+      id,
+      name: feature.properties?.scientificName || 'Unknown species',
+      color: feature.properties?.color || '#5b9bff',
+    });
+  }
+  return items;
+}
+
+function ensureCongenerPopover(map, setPopover) {
+  if (map._congenerPopoverBound) {
+    return;
+  }
+  map._congenerPopoverBound = true;
+  map.on('mousemove', 'congener-line', (event) => {
+    const items = congenerItemsAt(map, event.point);
+    const pointer = event.originalEvent;
+    if (!items.length || !pointer) {
+      setPopover(null);
+      map.getCanvas().style.cursor = '';
+      return;
+    }
+    map.getCanvas().style.cursor = 'pointer';
+    setPopover({ x: pointer.clientX, y: pointer.clientY, items });
+  });
+  map.on('mouseleave', 'congener-line', () => {
+    setPopover(null);
+    if (map.getCanvas()) {
+      map.getCanvas().style.cursor = '';
+    }
+  });
+}
+
+function CongenerPopover({ popover }) {
+  if (!popover?.items?.length) {
+    return null;
+  }
+  const width = 240;
+  const left = Math.max(8, Math.min(popover.x + 14, window.innerWidth - width - 8));
+  const top = Math.max(8, Math.min(popover.y + 16, window.innerHeight - 48));
+  return createPortal(
+    <div className="congener-popover" style={{ top, left }} role="tooltip">
+      <ul className="congener-popover-list">
+        {popover.items.map((item) => (
+          <li key={item.id}>
+            <span className="congener-popover-swatch" style={{ background: item.color }} aria-hidden="true" />
+            <em>{item.name}</em>
+          </li>
+        ))}
+      </ul>
+    </div>,
+    document.body
+  );
 }
 
 function ExternalLinkIcon() {
@@ -211,11 +375,17 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
   const suitabilityCacheRef = useRef({});
+  const congenerCacheRef = useRef({});
   const copyTimeoutRef = useRef(null);
   const [mapError, setMapError] = useState(null);
   const [showSuitability, setShowSuitability] = useState(false);
   const [suitabilityLoading, setSuitabilityLoading] = useState(false);
   const [suitabilityError, setSuitabilityError] = useState(null);
+  const [showCongeners, setShowCongeners] = useState(false);
+  const [congenerLoading, setCongenerLoading] = useState(false);
+  const [congenerError, setCongenerError] = useState(null);
+  const [congenerPayload, setCongenerPayload] = useState(null);
+  const [congenerPopover, setCongenerPopover] = useState(null);
   const [promptCopied, setPromptCopied] = useState(false);
 
   useEffect(() => () => {
@@ -323,9 +493,12 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
       }
     });
 
-    map.on('error', (e) => {
-      console.error('MapLibre error', e);
-      setMapError('Failed to render map tiles.');
+    map.on('error', (event) => {
+      const message = event?.error?.message || '';
+      console.error('MapLibre error', event?.error || event);
+      if (event?.tile || /tile|failed to fetch/i.test(message)) {
+        setMapError('Failed to render map tiles.');
+      }
     });
 
     return () => {
@@ -412,6 +585,93 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
     };
   }, [showSuitability, aphiaid, lon, lat, geojson]);
 
+  const congenerCacheKey = `${aphiaid}|${lon ?? ''}|${lat ?? ''}|${scientificName ?? ''}`;
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !showCongeners) {
+      if (map?.getLayer('congener-line')) {
+        map.setLayoutProperty('congener-line', 'visibility', 'none');
+      }
+      if (map?.getLayer('congener-casing')) {
+        map.setLayoutProperty('congener-casing', 'visibility', 'none');
+      }
+      setCongenerPopover(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const applyPayload = (payload) => {
+      setCongenerPayload(payload);
+      const apply = () => {
+        if (cancelled || mapRef.current !== map) {
+          return;
+        }
+        setCongenerLayerData(map, payload, true, setCongenerPopover);
+      };
+      if (layersReadyRef.current) {
+        apply();
+      } else {
+        map.once('load', apply);
+      }
+    };
+
+    const cached = congenerCacheRef.current[congenerCacheKey];
+    if (cached) {
+      applyPayload(cached);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const loadCongeners = async () => {
+      setCongenerLoading(true);
+      setCongenerError(null);
+      try {
+        const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
+        if (scientificName) {
+          params.set('name', scientificName);
+        }
+        if (lon != null) {
+          params.set('lon', String(lon));
+        }
+        if (lat != null) {
+          params.set('lat', String(lat));
+        }
+        const response = await axios.get(
+          `${API_URL}/api/density-map/${aphiaid}/congeners?${params.toString()}`
+        );
+        if (cancelled) {
+          return;
+        }
+        congenerCacheRef.current[congenerCacheKey] = response.data;
+        const currentMap = mapRef.current;
+        if (currentMap && currentMap === map) {
+          applyPayload(response.data);
+        } else {
+          setCongenerPayload(response.data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error.response?.data?.detail || 'Failed to load congeneric species';
+          setCongenerError(typeof message === 'string' ? message : JSON.stringify(message));
+        }
+      } finally {
+        if (!cancelled) {
+          setCongenerLoading(false);
+        }
+      }
+    };
+
+    void loadCongeners();
+    return () => {
+      cancelled = true;
+    };
+  }, [showCongeners, aphiaid, lon, lat, scientificName, geojson, congenerCacheKey]);
+
+  const congenerLegendNote = showCongeners && !congenerLoading && congenerPayload
+    ? congenerNote(congenerPayload, lon != null && lat != null)
+    : '';
   const gbifQuery = encodeURIComponent(scientificName || String(aphiaid)).replace(/%20/g, '+');
   const canCopyPrompt = lon != null && lat != null;
 
@@ -483,6 +743,15 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
           </span>
         </span>
         <span className="density-map-header-actions">
+          <label className="density-map-toggle" title="Outlines of congeneric species, at the density cutoff">
+            <input
+              type="checkbox"
+              checked={showCongeners}
+              onChange={(event) => setShowCongeners(event.target.checked)}
+              disabled={congenerLoading}
+            />
+            {congenerLoading ? 'Congeneric species…' : 'Congeneric species'}
+          </label>
           <label className="density-map-toggle">
             <input
               type="checkbox"
@@ -512,7 +781,35 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
       </div>
       {mapError && <div className="density-map-error">{mapError}</div>}
       {suitabilityError && <div className="density-map-error">{suitabilityError}</div>}
+      {congenerError && <div className="density-map-error">{congenerError}</div>}
       <div ref={containerRef} className="density-map" />
+      <CongenerPopover popover={congenerPopover} />
+      {showCongeners && !congenerLoading && congenerPayload ? (
+        <>
+          {congenerLegendNote ? (
+            <p className="congener-note">{congenerLegendNote}</p>
+          ) : null}
+          {congenerPayload.features?.length ? (
+            <ul className="congener-legend">
+              {[...congenerPayload.features]
+                .sort((a, b) => (a.properties?.rank ?? 0) - (b.properties?.rank ?? 0))
+                .map((feature) => {
+                  const id = String(feature.properties?.aphiaid ?? '');
+                  return (
+                    <li key={id}>
+                      <span
+                        className="congener-swatch"
+                        style={{ background: feature.properties?.color || '#5b9bff' }}
+                        aria-hidden="true"
+                      />
+                      <em>{feature.properties?.scientificName}</em>
+                    </li>
+                  );
+                })}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }

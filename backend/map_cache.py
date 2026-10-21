@@ -49,8 +49,7 @@ def _disk_path(key: str) -> str:
     return os.path.join(MAP_CACHE_DIR, f"{key}.json")
 
 
-def get_cached_map(kind: str, aphiaid: int, threshold: float) -> Optional[dict]:
-    key = _cache_key(kind, aphiaid, threshold)
+def get_cached_json(key: str) -> Optional[dict]:
     with _memory_lock:
         hit = _memory.get(key)
         if hit is not None:
@@ -71,8 +70,7 @@ def get_cached_map(kind: str, aphiaid: int, threshold: float) -> Optional[dict]:
     return data
 
 
-def store_cached_map(kind: str, aphiaid: int, threshold: float, payload: dict) -> None:
-    key = _cache_key(kind, aphiaid, threshold)
+def store_cached_json(key: str, payload: dict) -> None:
     with _memory_lock:
         _remember(key, payload)
 
@@ -92,6 +90,14 @@ def store_cached_map(kind: str, aphiaid: int, threshold: float, payload: dict) -
                 os.remove(tmp)
         except OSError:
             pass
+
+
+def get_cached_map(kind: str, aphiaid: int, threshold: float) -> Optional[dict]:
+    return get_cached_json(_cache_key(kind, aphiaid, threshold))
+
+
+def store_cached_map(kind: str, aphiaid: int, threshold: float, payload: dict) -> None:
+    store_cached_json(_cache_key(kind, aphiaid, threshold), payload)
 
 
 def _remember(key: str, payload: dict) -> None:
