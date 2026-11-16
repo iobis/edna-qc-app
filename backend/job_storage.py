@@ -50,9 +50,31 @@ def save_job_input(job_id: str, files_data: List[Dict[str, Any]]) -> None:
         json.dump(manifest, handle)
 
 
+def save_job_source_url(job_id: str, url: str) -> None:
+    directory = input_dir(job_id)
+    os.makedirs(directory, exist_ok=True)
+    with open(os.path.join(directory, "source_url.json"), "w", encoding="utf-8") as handle:
+        json.dump({"url": url}, handle)
+
+
+def load_job_source_url(job_id: str) -> Optional[str]:
+    path = os.path.join(input_dir(job_id), "source_url.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    url = payload.get("url")
+    return url if isinstance(url, str) and url.strip() else None
+
+
 def load_job_input(job_id: str) -> List[Dict[str, Any]]:
     directory = input_dir(job_id)
     manifest_path = os.path.join(directory, "manifest.json")
+    if not os.path.isfile(manifest_path):
+        return []
     with open(manifest_path, encoding="utf-8") as handle:
         manifest = json.load(handle)
     files_data = []

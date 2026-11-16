@@ -418,7 +418,7 @@ function App() {
         throw new Error(data.error || 'Analysis failed');
       }
 
-      await sleep(1500);
+      await sleep(1000);
     }
   };
 
@@ -639,17 +639,27 @@ function App() {
         </form>
 
         {loading && (
-          <div className="loading">
+          <div className="loading" aria-live="polite">
             <div className="spinner" role="status" aria-label="Loading" />
-            <span>
-              {jobStatus?.status === 'queued' && jobStatus.position > 0
-                ? `Queued (position ${jobStatus.position + 1})…`
-                : jobStatus?.status === 'queued'
-                  ? 'Queued…'
-                  : jobStatus?.status === 'running'
-                    ? 'Processing…'
-                    : 'Submitting…'}
-            </span>
+            <div className="loading-copy">
+              <span className="loading-message">
+                {jobStatus?.message
+                  ? jobStatus.message
+                  : jobStatus?.status === 'queued' && jobStatus.position > 0
+                    ? `Queued (position ${jobStatus.position + 1})…`
+                    : jobStatus?.status === 'queued'
+                      ? 'Queued…'
+                      : jobStatus?.status === 'running' &&
+                          jobStatus.files?.some((file) => file.pending_download)
+                        ? 'Downloading…'
+                        : jobStatus?.status === 'running'
+                          ? 'Processing…'
+                          : 'Submitting…'}
+              </span>
+              {jobStatus?.status === 'running' && jobStatus.message && (
+                <span className="loading-hint">Analysis in progress</span>
+              )}
+            </div>
           </div>
         )}
 

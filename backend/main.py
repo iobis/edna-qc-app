@@ -6,15 +6,13 @@ import logging
 import uuid
 import zipfile
 
-import requests
-
 from density_map import (
     get_congener_geojson,
     get_density_geojson,
     get_suitability_geojson,
     get_speciesgrids_records_geojson,
 )
-from job_storage import save_job_input
+from job_storage import save_job_input, save_job_source_url
 from job_store import (
     create_job,
     find_active_job_by_cache_key,
@@ -130,16 +128,17 @@ async def _read_submission(
         content = await file.read()
         file_items.append((filename, content, file.content_type))
 
+    trimmed_url = url.strip() if url else None
     try:
-        file_infos, files_data, invalid_files = collect_upload_payload(file_items, url=url)
+        file_infos, files_data, invalid_files = collect_upload_payload(
+            file_items, url=trimmed_url
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except zipfile.BadZipFile as exc:
         raise HTTPException(status_code=400, detail="Invalid zip file") from exc
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to download file from URL: {exc}") from exc
 
-    if not files_data:
+    if not files_data and not trimmed_url:
         raise HTTPException(
             status_code=400,
             detail="No valid files provided. Please upload files or provide a URL to a zip file.",
@@ -154,7 +153,7 @@ async def _read_submission(
             ),
         )
 
-    return file_infos, files_data
+    return file_infos, files_data, trimmed_url
 
 
 @app.post("/api/jobs")
@@ -162,9 +161,11 @@ async def create_analysis_job(
     files: List[UploadFile] = File(default=[]),
     url: Optional[str] = Form(default=None),
 ):
-    file_infos, files_data = await _read_submission(files, url)
+    file_infos, files_data, source_url = await _read_submission(files, url)
 
-    cache_key = compute_submission_hash(files_data)
+    # URL downloads happen in the worker; cache key includes the URL so identical
+    # remote submissions dedupe without blocking this request on the download.
+    cache_key = compute_submission_hash(files_data, url=source_url)
     cached_response = get_cached_response(cache_key)
     if cached_response is not None:
         logger.info("Serving cached processing result for submission %s", cache_key)
@@ -192,6 +193,8 @@ async def create_analysis_job(
 
     job_id = str(uuid.uuid4())
     save_job_input(job_id, files_data)
+    if source_url:
+        save_job_source_url(job_id, source_url)
     create_job(cache_key, file_infos, job_id=job_id)
     job = get_job(job_id)
     prune_expired_cache()

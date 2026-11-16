@@ -25,6 +25,12 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -35,12 +41,14 @@ def init_db() -> None:
                 status TEXT NOT NULL,
                 file_infos TEXT NOT NULL,
                 error TEXT,
+                message TEXT,
                 created_at TEXT NOT NULL,
                 started_at TEXT,
                 finished_at TEXT
             )
             """
         )
+        _ensure_column(conn, "jobs", "message", "message TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status, created_at)"
         )
@@ -147,12 +155,38 @@ def claim_next_job() -> Optional[Dict[str, Any]]:
         return _row_to_dict(job)
 
 
+def update_job_file_infos(job_id: str, file_infos: List[Dict[str, Any]]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET file_infos = ?
+            WHERE id = ?
+            """,
+            (json.dumps(file_infos), job_id),
+        )
+        conn.commit()
+
+
+def update_job_message(job_id: str, message: Optional[str]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET message = ?
+            WHERE id = ?
+            """,
+            (message, job_id),
+        )
+        conn.commit()
+
+
 def mark_completed(job_id: str) -> None:
     with _connect() as conn:
         conn.execute(
             """
             UPDATE jobs
-            SET status = 'completed', finished_at = ?, error = NULL
+            SET status = 'completed', finished_at = ?, error = NULL, message = NULL
             WHERE id = ?
             """,
             (_utcnow_iso(), job_id),
@@ -165,7 +199,7 @@ def mark_failed(job_id: str, error: str) -> None:
         conn.execute(
             """
             UPDATE jobs
-            SET status = 'failed', finished_at = ?, error = ?
+            SET status = 'failed', finished_at = ?, error = ?, message = NULL
             WHERE id = ?
             """,
             (_utcnow_iso(), error, job_id),
@@ -199,12 +233,14 @@ def prune_finished_jobs() -> int:
 
 
 def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    keys = row.keys()
     return {
         "id": row["id"],
         "cache_key": row["cache_key"],
         "status": row["status"],
         "file_infos": json.loads(row["file_infos"]),
         "error": row["error"],
+        "message": row["message"] if "message" in keys else None,
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
@@ -220,6 +256,7 @@ def job_to_api_response(job: Dict[str, Any], result: Optional[Dict[str, Any]] = 
         "started_at": job["started_at"],
         "finished_at": job["finished_at"],
         "error": job["error"],
+        "message": job.get("message"),
         "files": job["file_infos"],
         "files_received": len(job["file_infos"]),
     }

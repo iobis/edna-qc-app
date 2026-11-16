@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from python_calamine import CalamineWorkbook
 
@@ -21,6 +21,12 @@ from parsing import extract_species_occurrences, match_names_with_worms
 logger = logging.getLogger(__name__)
 
 WILDERLAB_REQUIRED_SHEETS = frozenset({"metadata", "aggregated"})
+StatusCallback = Callable[[str], None]
+
+
+def _report(on_status: Optional[StatusCallback], message: str) -> None:
+    if on_status:
+        on_status(message)
 
 
 def _wilderlab_workbook_from_bytes(content: bytes) -> CalamineWorkbook:
@@ -261,7 +267,10 @@ def wilderlab_aggregated_to_occurrence_rows(
     return occurrences
 
 
-def process_wilderlab_files(files_data: List[Dict]) -> Dict:
+def process_wilderlab_files(
+    files_data: List[Dict],
+    on_status: Optional[StatusCallback] = None,
+) -> Dict:
     """
     Process a Wilderlab XLSX upload into the same analysis result shape as DwC ingest.
     """
@@ -286,12 +295,14 @@ def process_wilderlab_files(files_data: List[Dict]) -> Dict:
     wilderlab_file = wilderlab_files[0]
     filename = wilderlab_file["filename"]
     logger.info("Processing Wilderlab XLSX: %s", filename)
+    _report(on_status, f"Reading Wilderlab workbook {filename}…")
 
     sheets = parse_wilderlab_workbook(wilderlab_file["content"])
     metadata_rows = sheets["metadata"]
     aggregated_rows = sheets["aggregated"]
     full_rows = sheets.get("full") or []
 
+    _report(on_status, "Converting Wilderlab sheets to occurrences…")
     job_id = _parse_wilderlab_job_id(metadata_rows)
     samples = parse_wilderlab_metadata_samples(metadata_rows)
     sequence_index = _build_wilderlab_sequence_index(full_rows, samples)
@@ -359,7 +370,7 @@ def process_wilderlab_files(files_data: List[Dict]) -> Dict:
             "Wilderlab: matching %d unique scientific names with WoRMS",
             len(unique_names),
         )
-        name_matches = match_names_with_worms(unique_names)
+        name_matches = match_names_with_worms(unique_names, on_status=on_status)
         result["name_matching_performed"] = True
         result["name_matching_count"] = len(name_matches)
         result["name_matching_total"] = len(unique_names)
@@ -372,6 +383,7 @@ def process_wilderlab_files(files_data: List[Dict]) -> Dict:
         result["name_matching_performed"] = False
         result["name_matching_message"] = None
 
+    _report(on_status, "Extracting unique species occurrences…")
     occurrences = extract_species_occurrences(filtered_parsed, name_matches)
 
     if not has_taxon_rank:
@@ -385,7 +397,9 @@ def process_wilderlab_files(files_data: List[Dict]) -> Dict:
 
     result["original_occurrence_count"] = len(filtered_parsed)
     result["unique_occurrence_count"] = len(occurrences)
-    analyzed_occurrences = analyze_species_occurrences(occurrences)
+    analyzed_occurrences = analyze_species_occurrences(
+        occurrences, on_status=on_status
+    )
     result["analyzed_occurrences"] = analyzed_occurrences
     result["analyzed_count"] = len(analyzed_occurrences)
     return result

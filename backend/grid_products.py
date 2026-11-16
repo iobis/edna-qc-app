@@ -54,6 +54,11 @@ _profile_lock = threading.Lock()
 _profile_cache: Dict[int, Optional[dict]] = {}
 _suitability_lock = threading.Lock()
 _suitability_cache: Dict[int, List[Tuple[int, float]]] = {}
+_curve_lock = threading.Lock()
+# aphiaid -> (temperature grid °C, normalized density) or None when the species has no profile
+_curve_cache: Dict[int, Optional[Tuple[np.ndarray, np.ndarray]]] = {}
+# Suitability is a 1D function of SST. This step keeps interpolated values within ~1e-5 of gaussian_kde.
+_SUITABILITY_GRID_STEP_C = 0.05
 _duckdb_init_lock = threading.Lock()
 _thread_local = threading.local()
 
@@ -95,6 +100,20 @@ def _load_thetao() -> dict:
         return _thetao_state
 
 
+def _open_profile_connection() -> duckdb.DuckDBPyConnection:
+    """Thread-local DuckDB connection for single-species profile lookups."""
+    conn = getattr(_thread_local, "profile_conn", None)
+    if conn is not None:
+        return conn
+    with _duckdb_init_lock:
+        conn = getattr(_thread_local, "profile_conn", None)
+        if conn is not None:
+            return conn
+        conn = duckdb.connect(database=":memory:")
+        _thread_local.profile_conn = conn
+        return conn
+
+
 def get_profile(aphiaid: int) -> Optional[dict]:
     aid = int(aphiaid)
     with _profile_lock:
@@ -104,20 +123,22 @@ def get_profile(aphiaid: int) -> Optional[dict]:
     if not os.path.isfile(THERMAL_PROFILES_PATH):
         raise FileNotFoundError(f"Thermal profiles not found: {THERMAL_PROFILES_PATH}")
 
-    table = pq.read_table(
-        THERMAL_PROFILES_PATH,
-        filters=[("AphiaID", "=", aid)],
-        columns=["AphiaID", "bandwidth", "temps", "norm_max"],
-    )
-    if table.num_rows == 0:
+    row = _open_profile_connection().execute(
+        """
+        SELECT bandwidth, temps, norm_max
+        FROM read_parquet(?)
+        WHERE AphiaID = ?
+        LIMIT 1
+        """,
+        [THERMAL_PROFILES_PATH, aid],
+    ).fetchone()
+    if row is None:
         profile = None
     else:
-        row = table.slice(0, 1).to_pydict()
-        temps = np.asarray(row["temps"][0], dtype=np.float64)
         profile = {
-            "temps": temps,
-            "bandwidth": float(row["bandwidth"][0]),
-            "norm_max": float(row["norm_max"][0]),
+            "temps": np.asarray(row[1], dtype=np.float64),
+            "bandwidth": float(row[0]),
+            "norm_max": float(row[2]),
         }
 
     with _profile_lock:
@@ -125,23 +146,64 @@ def get_profile(aphiaid: int) -> Optional[dict]:
     return profile
 
 
-def suitability_at_cell(aphiaid: int, h3_cell: int, kde_cache: Optional[dict] = None) -> Optional[float]:
-    profile = get_profile(aphiaid)
+def _suitability_curve(aphiaid: int) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Normalized KDE sampled every 0.05 °C across the SST range.
+
+    Suitability depends only on temperature, so map cells and occurrence scores
+    interpolate this curve instead of evaluating the kernel once per ocean cell.
+    """
+    aid = int(aphiaid)
+    with _curve_lock:
+        if aid in _curve_cache:
+            return _curve_cache[aid]
+
+    profile = get_profile(aid)
     if profile is None:
+        with _curve_lock:
+            _curve_cache[aid] = None
         return None
-    thetao_val = _load_thetao()["by_h3"].get(int(h3_cell))
-    if thetao_val is None or not np.isfinite(thetao_val):
-        return None
+
     norm_max = profile["norm_max"]
     if not norm_max or not np.isfinite(norm_max):
         return None
 
-    cache = kde_cache if kde_cache is not None else {}
+    sst = _load_thetao()["thetao"]
+    finite = np.isfinite(sst)
+    if not finite.any():
+        return None
+
+    lo = float(sst[finite].min())
+    hi = float(sst[finite].max())
+    if hi == lo:
+        grid = np.array([lo], dtype=np.float64)
+    else:
+        steps = int(np.ceil((hi - lo) / _SUITABILITY_GRID_STEP_C))
+        grid = np.linspace(lo, hi, steps + 1)
+
+    kde = gaussian_kde(profile["temps"], bw_method=float(profile["bandwidth"]))
+    density = np.asarray(kde.evaluate(grid), dtype=np.float64) / float(norm_max)
+    curve = (grid, density)
+    with _curve_lock:
+        _curve_cache[aid] = curve
+    return curve
+
+
+def suitability_at_cell(aphiaid: int, h3_cell: int, kde_cache: Optional[dict] = None) -> Optional[float]:
     aid = int(aphiaid)
-    if aid not in cache:
-        cache[aid] = gaussian_kde(profile["temps"], bw_method=profile["bandwidth"])
-    value = float(cache[aid].evaluate([thetao_val])[0] / norm_max)
-    return value
+    thetao_val = _load_thetao()["by_h3"].get(int(h3_cell))
+    if thetao_val is None or not np.isfinite(thetao_val):
+        return None
+
+    curve = kde_cache.get(aid) if kde_cache is not None else None
+    if curve is None:
+        curve = _suitability_curve(aid)
+        if curve is None:
+            return None
+        if kde_cache is not None:
+            kde_cache[aid] = curve
+
+    grid, density = curve
+    return float(np.interp(float(thetao_val), grid, density))
 
 
 def suitability_rows_for_aphiaid(aphiaid: int) -> List[Tuple[int, float]]:
@@ -155,20 +217,21 @@ def suitability_rows_for_aphiaid(aphiaid: int) -> List[Tuple[int, float]]:
     profile = get_profile(aid)
     if profile is None:
         raise FileNotFoundError(f"No thermal profile for AphiaID {aphiaid}")
-
-    thetao = _load_thetao()
-    temps = profile["temps"]
-    bandwidth = profile["bandwidth"]
     norm_max = profile["norm_max"]
     if not norm_max or not np.isfinite(norm_max):
         raise ValueError(f"Invalid norm_max for AphiaID {aphiaid}")
 
-    kde = gaussian_kde(temps, bw_method=bandwidth)
+    curve = _suitability_curve(aid)
+    if curve is None:
+        raise FileNotFoundError(f"No thermal profile for AphiaID {aphiaid}")
+
+    grid, density = curve
+    thetao = _load_thetao()
     sst = thetao["thetao"]
     finite = np.isfinite(sst)
     suit = np.full(len(sst), np.nan, dtype=np.float64)
     if finite.any():
-        suit[finite] = kde.evaluate(sst[finite]) / norm_max
+        suit[finite] = np.interp(sst[finite], grid, density)
 
     rows: List[Tuple[int, float]] = []
     for cell, value in zip(thetao["h3"], suit):

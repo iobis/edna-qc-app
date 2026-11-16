@@ -28,11 +28,19 @@ def _cache_path(cache_key: str) -> str:
     return os.path.join(CACHE_DIR, f"{cache_key}.json")
 
 
-def compute_submission_hash(files_data: List[Dict[str, Any]]) -> str:
-    """Hash filenames and contents to identify an identical submission."""
+def compute_submission_hash(
+    files_data: List[Dict[str, Any]],
+    url: Optional[str] = None,
+) -> str:
+    """Hash filenames/contents (and optional source URL) to identify a submission."""
     hasher = hashlib.sha256()
     hasher.update(CACHE_VERSION.encode("utf-8"))
     hasher.update(b"\0")
+
+    if url:
+        hasher.update(b"url\0")
+        hasher.update(url.strip().encode("utf-8"))
+        hasher.update(b"\0")
 
     for item in sorted(files_data, key=lambda entry: entry["filename"]):
         hasher.update(item["filename"].encode("utf-8"))

@@ -1,10 +1,22 @@
 import logging
 import time
+import zipfile
 
-from job_storage import cleanup_job_input, load_job_input, save_job_input
-from job_store import claim_next_job, init_db, mark_completed, mark_failed, prune_finished_jobs
+import requests
+
+from job_storage import cleanup_job_input, load_job_input, load_job_source_url
+from job_store import (
+    claim_next_job,
+    init_db,
+    mark_completed,
+    mark_failed,
+    prune_finished_jobs,
+    update_job_file_infos,
+    update_job_message,
+)
 from parsing import process_uploaded_files
 from result_cache import get_cached_response, prune_expired_cache, store_cached_response
+from upload_processing import extract_files_from_url
 from wilderlab import find_wilderlab_xlsx_files, process_wilderlab_files
 
 logging.basicConfig(
@@ -19,7 +31,7 @@ POLL_INTERVAL_SECONDS = float(__import__("os").environ.get("WORKER_POLL_INTERVAL
 def process_job(job: dict) -> None:
     job_id = job["id"]
     cache_key = job["cache_key"]
-    file_infos = job["file_infos"]
+    file_infos = list(job["file_infos"] or [])
 
     cached = get_cached_response(cache_key)
     if cached is not None:
@@ -28,11 +40,33 @@ def process_job(job: dict) -> None:
         mark_completed(job_id)
         return
 
+    def set_message(message: str) -> None:
+        update_job_message(job_id, message)
+
     try:
+        set_message("Starting analysis…")
         files_data = load_job_input(job_id)
+        source_url = load_job_source_url(job_id)
+        if source_url:
+            logger.info("Job %s downloading source URL: %s", job_id, source_url)
+            url_file_infos, url_files_data = extract_files_from_url(
+                source_url,
+                on_status=set_message,
+            )
+            files_data.extend(url_files_data)
+            file_infos = [
+                info for info in file_infos if not info.get("pending_download")
+            ] + url_file_infos
+            update_job_file_infos(job_id, file_infos)
+
+        if not files_data:
+            raise ValueError("No valid files available for processing")
+
         wilderlab_files = find_wilderlab_xlsx_files(files_data)
         if wilderlab_files:
-            processing_result = process_wilderlab_files(files_data)
+            processing_result = process_wilderlab_files(
+                files_data, on_status=set_message
+            )
         else:
             xlsx_files = [
                 f["filename"]
@@ -44,7 +78,10 @@ def process_job(job: dict) -> None:
                     "Unsupported Excel file(s). Only Wilderlab sample-batch XLSX "
                     f"exports are supported. Rejected: {', '.join(xlsx_files)}"
                 )
-            processing_result = process_uploaded_files(files_data)
+            processing_result = process_uploaded_files(
+                files_data, on_status=set_message
+            )
+        set_message("Saving results…")
         response = {
             "files_received": len(file_infos),
             "files": file_infos,
@@ -58,6 +95,12 @@ def process_job(job: dict) -> None:
     except ValueError as exc:
         mark_failed(job_id, str(exc))
         logger.warning("Job %s failed: %s", job_id, exc)
+    except zipfile.BadZipFile as exc:
+        mark_failed(job_id, "Invalid zip file from URL")
+        logger.warning("Job %s failed: invalid zip from URL: %s", job_id, exc)
+    except requests.RequestException as exc:
+        mark_failed(job_id, f"Failed to download file from URL: {exc}")
+        logger.warning("Job %s failed downloading URL: %s", job_id, exc)
     except Exception as exc:
         mark_failed(job_id, f"Internal server error while processing files: {exc}")
         logger.error("Job %s failed unexpectedly", job_id, exc_info=True)

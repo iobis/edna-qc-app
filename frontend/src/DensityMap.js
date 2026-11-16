@@ -142,6 +142,42 @@ function addRecordsLayer(map, records) {
   raisePointLayers(map);
 }
 
+function suitabilityErrorMessage(error) {
+  const message = error.response?.data?.detail || 'Failed to load suitability map';
+  return typeof message === 'string' ? message : JSON.stringify(message);
+}
+
+function requestSuitability(cacheRef, flightRef, speciesId, speciesLon, speciesLat) {
+  const cached = cacheRef.current[speciesId];
+  if (cached) {
+    return Promise.resolve(cached);
+  }
+  const inflight = flightRef.current[speciesId];
+  if (inflight) {
+    return inflight;
+  }
+
+  const params = new URLSearchParams({ v: `${MAP_GEOMETRY_VERSION}-b05` });
+  if (speciesLon != null) {
+    params.set('lon', String(speciesLon));
+  }
+  if (speciesLat != null) {
+    params.set('lat', String(speciesLat));
+  }
+  const promise = axios
+    .get(`${API_URL}/api/density-map/${speciesId}/suitability?${params.toString()}`)
+    .then((response) => {
+      cacheRef.current[speciesId] = response.data;
+      return response.data;
+    })
+    .catch((error) => {
+      delete flightRef.current[speciesId];
+      throw error;
+    });
+  flightRef.current[speciesId] = promise;
+  return promise;
+}
+
 function setSuitabilityLayerData(map, suitabilityGeojson, visible) {
   const data = suitabilityGeojson || { type: 'FeatureCollection', features: [] };
   const source = map.getSource('suitability');
@@ -375,6 +411,7 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   const mapRef = useRef(null);
   const layersReadyRef = useRef(false);
   const suitabilityCacheRef = useRef({});
+  const suitabilityFlightRef = useRef({});
   const congenerCacheRef = useRef({});
   const copyTimeoutRef = useRef(null);
   const [mapError, setMapError] = useState(null);
@@ -525,61 +562,84 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
   }, [records]);
 
   useEffect(() => {
+    if (!aphiaid) {
+      return undefined;
+    }
+    let cancelled = false;
+    requestSuitability(suitabilityCacheRef, suitabilityFlightRef, aphiaid, lon, lat).catch((error) => {
+      if (!cancelled) {
+        console.error('Failed to prefetch suitability map', error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [aphiaid, lon, lat]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !showSuitability) {
       if (map?.getLayer('suitability-fill')) {
         map.setLayoutProperty('suitability-fill', 'visibility', 'none');
       }
+      setSuitabilityLoading(false);
       return undefined;
     }
 
-    const cached = suitabilityCacheRef.current[aphiaid];
-    if (cached) {
-      const apply = () => setSuitabilityLayerData(map, cached, true);
+    let cancelled = false;
+    const applyVisible = (data) => {
+      const apply = () => {
+        if (cancelled) {
+          return;
+        }
+        setSuitabilityLayerData(map, data, true);
+      };
       if (layersReadyRef.current) {
         apply();
       } else {
         map.once('load', apply);
       }
-      return undefined;
+    };
+
+    const cached = suitabilityCacheRef.current[aphiaid];
+    if (cached) {
+      applyVisible(cached);
+      setSuitabilityLoading(false);
+      setSuitabilityError(null);
+      return () => {
+        cancelled = true;
+      };
     }
 
-    let cancelled = false;
-    const loadSuitability = async () => {
-      setSuitabilityLoading(true);
-      setSuitabilityError(null);
-      try {
-        const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
-        if (lon != null) {
-          params.set('lon', String(lon));
-        }
-        if (lat != null) {
-          params.set('lat', String(lat));
-        }
-        const response = await axios.get(
-          `${API_URL}/api/density-map/${aphiaid}/suitability?${params.toString()}`
-        );
+    setSuitabilityLoading(true);
+    setSuitabilityError(null);
+    requestSuitability(suitabilityCacheRef, suitabilityFlightRef, aphiaid, lon, lat)
+      .then((data) => {
         if (cancelled) {
           return;
         }
-        suitabilityCacheRef.current[aphiaid] = response.data;
         const currentMap = mapRef.current;
         if (currentMap && layersReadyRef.current) {
-          setSuitabilityLayerData(currentMap, response.data, true);
+          setSuitabilityLayerData(currentMap, data, true);
+        } else if (currentMap) {
+          currentMap.once('load', () => {
+            if (!cancelled) {
+              setSuitabilityLayerData(currentMap, data, true);
+            }
+          });
         }
-      } catch (error) {
+      })
+      .catch((error) => {
         if (!cancelled) {
-          const message = error.response?.data?.detail || 'Failed to load suitability map';
-          setSuitabilityError(typeof message === 'string' ? message : JSON.stringify(message));
+          setSuitabilityError(suitabilityErrorMessage(error));
         }
-      } finally {
+      })
+      .finally(() => {
         if (!cancelled) {
           setSuitabilityLoading(false);
         }
-      }
-    };
+      });
 
-    void loadSuitability();
     return () => {
       cancelled = true;
     };

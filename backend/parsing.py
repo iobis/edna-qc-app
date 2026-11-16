@@ -2,13 +2,20 @@ import csv
 import io
 import re
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import Callable, List, Dict, Optional, Tuple
 
 import requests
 
 from analysis import analyze_species_occurrences
 
 logger = logging.getLogger(__name__)
+
+StatusCallback = Callable[[str], None]
+
+
+def _report(on_status: Optional[StatusCallback], message: str) -> None:
+    if on_status:
+        on_status(message)
 
 WORMS_BATCH_URL = "https://www.marinespecies.org/rest/AphiaRecordsByAphiaIDs"
 WORMS_MATCH_NAMES_URL = "https://www.marinespecies.org/rest/AphiaRecordsByMatchNames"
@@ -502,7 +509,10 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
     return list(unique_occurrences.values())
 
 
-def match_names_with_worms(scientific_names: List[str]) -> Dict[str, Dict]:
+def match_names_with_worms(
+    scientific_names: List[str],
+    on_status: Optional[StatusCallback] = None,
+) -> Dict[str, Dict]:
     """
     Match scientific names with WoRMS using the match names API.
     Only returns exact matches (match_type="exact"), using the first match for each name.
@@ -521,10 +531,13 @@ def match_names_with_worms(scientific_names: List[str]) -> Dict[str, Dict]:
         return {}
     
     name_to_match: Dict[str, Dict] = {}
+    total = len(scientific_names)
     
     batch_size = 50
-    for i in range(0, len(scientific_names), batch_size):
+    for i in range(0, total, batch_size):
         batch = scientific_names[i : i + batch_size]
+        done = min(i + len(batch), total)
+        _report(on_status, f"Matching names with WoRMS ({done}/{total})…")
         params = [
             ("marine_only", "false"),
             ("extant_only", "false"),
@@ -569,7 +582,10 @@ def match_names_with_worms(scientific_names: List[str]) -> Dict[str, Dict]:
     return name_to_match
 
 
-def normalize_aphiaids(occurrences: List[Dict]) -> None:
+def normalize_aphiaids(
+    occurrences: List[Dict],
+    on_status: Optional[StatusCallback] = None,
+) -> None:
     """
     Replace AphiaIDs with their accepted (valid) AphiaIDs using the WoRMS API.
 
@@ -582,13 +598,16 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
     if not unique_ids:
         return
 
-    logger.info("Normalizing %d AphiaIDs via WoRMS", len(unique_ids))
+    total = len(unique_ids)
+    logger.info("Normalizing %d AphiaIDs via WoRMS", total)
 
     id_to_data: Dict[int, Dict] = {}
 
     batch_size = 50
-    for i in range(0, len(unique_ids), batch_size):
+    for i in range(0, total, batch_size):
         batch = unique_ids[i : i + batch_size]
+        done = min(i + len(batch), total)
+        _report(on_status, f"Normalizing AphiaIDs via WoRMS ({done}/{total})…")
         params = [("aphiaids[]", str(aid)) for aid in batch]
         try:
             response = requests.get(WORMS_BATCH_URL, params=params, timeout=10)
@@ -632,7 +651,10 @@ def normalize_aphiaids(occurrences: List[Dict]) -> None:
                 occ["rank"] = data["rank"]
 
 
-def process_uploaded_files(files_data: List[Dict]) -> Dict:
+def process_uploaded_files(
+    files_data: List[Dict],
+    on_status: Optional[StatusCallback] = None,
+) -> Dict:
     """
     Process uploaded files, looking for occurrence files and parsing them.
 
@@ -654,6 +676,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
         ValueError: If file parsing fails or required columns are missing
         Exception: For other processing errors
     """
+    _report(on_status, "Reading occurrence tables…")
     filenames = [f['filename'] for f in files_data]
     occurrence_filename = find_occurrence_file(filenames)
     event_filename = find_event_file(filenames)
@@ -681,6 +704,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
     if not occurrence_file:
         return result
 
+    _report(on_status, f"Parsing {occurrence_filename}…")
     parsed, detected_delimiter = parse_separated_file(occurrence_file['content'])
     result['row_count'] = len(parsed)
     result['detected_delimiter'] = detected_delimiter
@@ -706,6 +730,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
             None
         )
         if event_file:
+            _report(on_status, f"Joining event coordinates from {event_filename}…")
             event_rows, _ = parse_separated_file(event_file['content'])
             if event_rows and 'eventID' in event_rows[0]:
                 parsed, event_stats = enrich_occurrences_with_event_coords(parsed, event_rows)
@@ -740,6 +765,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
             None
         )
         if dna_file:
+            _report(on_status, f"Joining DNA sequences from {dna_filename}…")
             dna_rows, _ = parse_separated_file(dna_file['content'])
             dna_headers = dna_rows[0].keys() if dna_rows else []
             has_dna_fields = (
@@ -807,7 +833,7 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
         ))
         if unique_names:
             logger.info(f"Matching {len(unique_names)} unique scientific names with WoRMS")
-            name_matches = match_names_with_worms(unique_names)
+            name_matches = match_names_with_worms(unique_names, on_status=on_status)
             result['name_matching_performed'] = True
             result['name_matching_count'] = len(name_matches)
             result['name_matching_total'] = len(unique_names)
@@ -822,11 +848,12 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
         result['name_matching_performed'] = False
         result['name_matching_message'] = None
 
+    _report(on_status, "Extracting unique species occurrences…")
     occurrences = extract_species_occurrences(filtered_parsed, name_matches)
 
     # Only normalize AphiaIDs if we didn't do name matching (name matching already provides valid IDs)
     if has_scientific_name_id:
-        normalize_aphiaids(occurrences)
+        normalize_aphiaids(occurrences, on_status=on_status)
 
     # If taxonRank was missing initially, filter by rank from API response before further processing
     if not has_taxon_rank:
@@ -841,7 +868,9 @@ def process_uploaded_files(files_data: List[Dict]) -> Dict:
 
     result['original_occurrence_count'] = len(filtered_parsed)
     result['unique_occurrence_count'] = len(occurrences)
-    analyzed_occurrences = analyze_species_occurrences(occurrences)
+    analyzed_occurrences = analyze_species_occurrences(
+        occurrences, on_status=on_status
+    )
     result['analyzed_occurrences'] = analyzed_occurrences
     result['analyzed_count'] = len(analyzed_occurrences)
 

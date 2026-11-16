@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import Callable, Dict, List, Optional
 import logging
 
 from grid_products import (
@@ -21,8 +21,13 @@ SPEEDY_DATA_DIR = DENSITY_PATH
 
 logger = logging.getLogger(__name__)
 
+StatusCallback = Callable[[str], None]
 
-def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
+
+def analyze_species_occurrences(
+    occurrences: List[Dict],
+    on_status: Optional[StatusCallback] = None,
+) -> List[Dict]:
     """
     Attach density and thermal suitability scores to each occurrence.
 
@@ -33,6 +38,10 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     Lookups are batched: one parquet join for all density cells, one profile
     preload, then in-memory suitability evaluation.
     """
+    def report(message: str) -> None:
+        if on_status:
+            on_status(message)
+
     if not occurrences:
         return occurrences
 
@@ -49,6 +58,7 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     if not density_ok and not thermal_ok:
         return occurrences
 
+    report("Resolving grid cells for occurrences…")
     # Resolve H3 cells once up front.
     resolved = []
     for occurrence in occurrences:
@@ -74,14 +84,16 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     if not resolved:
         return occurrences
 
+    unique_taxa = len({aphiaid for _, aphiaid, _ in resolved})
     logger.info(
         "Scoring %s occurrences (%s unique AphiaIDs)",
         len(resolved),
-        len({aphiaid for _, aphiaid, _ in resolved}),
+        unique_taxa,
     )
 
     density_map: Dict = {}
     if density_ok:
+        report(f"Looking up density scores ({len(resolved)} occurrences)…")
         conn = open_h3_connection()
         try:
             density_map = densities_for_lookups(
@@ -94,6 +106,7 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
         logger.info("Density lookup done: %s hits", len(density_map))
 
     if thermal_ok:
+        report(f"Loading thermal profiles ({unique_taxa} taxa)…")
         try:
             preload_profiles([aphiaid for _, aphiaid, _ in resolved])
         except FileNotFoundError:
@@ -107,6 +120,9 @@ def analyze_species_occurrences(occurrences: List[Dict]) -> List[Dict]:
     missing_profile = 0
     scored = 0
     kde_cache: dict = {}
+
+    if thermal_ok:
+        report(f"Scoring thermal suitability ({len(resolved)} occurrences)…")
 
     for occurrence, aphiaid, h3_cell in resolved:
         if density_ok:
