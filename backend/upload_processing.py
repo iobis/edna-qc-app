@@ -127,6 +127,44 @@ def download_zip_from_url(
     raise requests.RequestException(f"Failed after {URL_DOWNLOAD_RETRIES} attempts: {last_error}")
 
 
+def _infos_and_data_from_extracted(
+    extracted: List[Dict],
+    *,
+    source_url: Optional[str] = None,
+    source_zip: Optional[str] = None,
+) -> Tuple[List[Dict], List[Dict]]:
+    file_infos: List[Dict] = []
+    files_data: List[Dict] = []
+    for extracted_file in extracted:
+        info = {
+            "filename": extracted_file["filename"],
+            "content_type": "application/octet-stream",
+            "size": len(extracted_file["content"]),
+        }
+        if source_url:
+            info["source_url"] = source_url
+        if source_zip:
+            info["source_zip"] = source_zip
+        file_infos.append(info)
+        files_data.append(extracted_file)
+    return file_infos, files_data
+
+
+def extract_files_from_zip_bytes(
+    content: bytes,
+    source_name: str,
+    on_status: Optional[StatusCallback] = None,
+) -> Tuple[List[Dict], List[Dict]]:
+    if on_status:
+        on_status(f"Extracting files from {source_name}…")
+    extracted = extract_text_files_from_zip(content, source_name)
+    if not extracted:
+        raise ValueError(
+            f"Zip file '{source_name}' contains no valid text files (.txt, .csv, .tsv)"
+        )
+    return _infos_and_data_from_extracted(extracted, source_zip=source_name)
+
+
 def extract_files_from_url(
     url: str,
     on_status: Optional[StatusCallback] = None,
@@ -138,18 +176,7 @@ def extract_files_from_url(
     extracted = extract_text_files_from_zip(content, url)
     if not extracted:
         raise ValueError("Zip file from URL contains no valid text files (.txt, .csv, .tsv)")
-
-    file_infos: List[Dict] = []
-    files_data: List[Dict] = []
-    for extracted_file in extracted:
-        file_infos.append({
-            "filename": extracted_file["filename"],
-            "content_type": "application/octet-stream",
-            "size": len(extracted_file["content"]),
-            "source_url": url,
-        })
-        files_data.append(extracted_file)
-    return file_infos, files_data
+    return _infos_and_data_from_extracted(extracted, source_url=url)
 
 
 def collect_upload_payload(
@@ -175,19 +202,17 @@ def collect_upload_payload(
             continue
 
         if ext == ".zip":
-            extracted = extract_text_files_from_zip(content, filename)
-            if not extracted:
-                raise ValueError(
-                    f"Zip file '{filename}' contains no valid text files (.txt, .csv, .tsv)"
-                )
-            for extracted_file in extracted:
-                file_infos.append({
-                    "filename": extracted_file["filename"],
-                    "content_type": "application/octet-stream",
-                    "size": len(extracted_file["content"]),
-                    "source_zip": filename,
-                })
-                files_data.append(extracted_file)
+            # Keep the zip intact for the worker; extracting large DwCAs in the
+            # request path blocks job creation and starves progress updates.
+            if len(content) < 4 or content[:2] != b"PK":
+                raise ValueError(f"File '{filename}' is not a valid zip archive")
+            file_infos.append({
+                "filename": filename,
+                "content_type": content_type or "application/zip",
+                "size": len(content),
+                "pending_extract": True,
+            })
+            files_data.append({"filename": filename, "content": content})
         else:
             file_infos.append({
                 "filename": filename,

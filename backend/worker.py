@@ -16,7 +16,7 @@ from job_store import (
 )
 from parsing import process_uploaded_files
 from result_cache import get_cached_response, prune_expired_cache, store_cached_response
-from upload_processing import extract_files_from_url
+from upload_processing import extract_files_from_url, extract_files_from_zip_bytes
 from wilderlab import find_wilderlab_xlsx_files, process_wilderlab_files
 
 logging.basicConfig(
@@ -47,6 +47,29 @@ def process_job(job: dict) -> None:
         set_message("Starting analysis…")
         files_data = load_job_input(job_id)
         source_url = load_job_source_url(job_id)
+
+        # Expand uploaded zip archives in the worker (not during POST /api/jobs).
+        expanded_files: list = []
+        expanded_infos: list = [
+            info for info in file_infos if not info.get("pending_extract")
+        ]
+        for item in files_data:
+            filename = item.get("filename", "")
+            if filename.lower().endswith(".zip"):
+                zip_infos, zip_files = extract_files_from_zip_bytes(
+                    item["content"],
+                    filename,
+                    on_status=set_message,
+                )
+                expanded_files.extend(zip_files)
+                expanded_infos.extend(zip_infos)
+            else:
+                expanded_files.append(item)
+        files_data = expanded_files
+        if any(info.get("pending_extract") for info in file_infos):
+            file_infos = expanded_infos
+            update_job_file_infos(job_id, file_infos)
+
         if source_url:
             logger.info("Job %s downloading source URL: %s", job_id, source_url)
             url_file_infos, url_files_data = extract_files_from_url(
@@ -81,6 +104,19 @@ def process_job(job: dict) -> None:
             processing_result = process_uploaded_files(
                 files_data, on_status=set_message
             )
+
+        if not processing_result.get("occurrence_file_found") and not processing_result.get(
+            "wilderlab_file_found"
+        ):
+            raise ValueError(
+                "No occurrence table found after preparing inputs. "
+                "Expected occurrence*.txt/csv/tsv (or a Wilderlab XLSX)."
+            )
+        if not processing_result.get("analyzed_occurrences"):
+            raise ValueError(
+                "No species occurrences could be analyzed from the submitted files."
+            )
+
         set_message("Saving results…")
         response = {
             "files_received": len(file_infos),

@@ -196,6 +196,7 @@ function App() {
   const [uploadError, setUploadError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [jobStatus, setJobStatus] = useState(null);
+  const [statusMessage, setStatusMessage] = useState(null);
   const [annotations, setAnnotations] = useState({});
   const [annotationsLoaded, setAnnotationsLoaded] = useState(false);
   const [expandedRow, setExpandedRow] = useState(null);
@@ -405,11 +406,53 @@ function App() {
     }
   );
 
+  const formatErrorDetail = (error) => {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => (typeof item === 'string' ? item : item?.msg || JSON.stringify(item)))
+        .join('; ');
+    }
+    if (detail && typeof detail === 'object') {
+      return detail.msg || JSON.stringify(detail);
+    }
+    return error.message || 'Upload failed';
+  };
+
+  const fallbackJobMessage = (data) => {
+    if (!data) {
+      return 'Starting…';
+    }
+    if (data.message) {
+      return data.message;
+    }
+    if (data.status === 'queued' && data.position > 0) {
+      return `Queued (position ${data.position + 1})…`;
+    }
+    if (data.status === 'queued') {
+      return 'Waiting in queue…';
+    }
+    if (data.status === 'running') {
+      if (data.files?.some((file) => file.pending_download)) {
+        return 'Downloading…';
+      }
+      if (data.files?.some((file) => file.pending_extract)) {
+        return 'Extracting archive…';
+      }
+      return 'Running analysis…';
+    }
+    return 'Working…';
+  };
+
   const pollJobUntilDone = async (jobId) => {
     while (true) {
       const response = await axios.get(`${API_URL}/api/jobs/${jobId}`);
       const data = response.data;
       setJobStatus(data);
+      setStatusMessage(fallbackJobMessage(data));
 
       if (data.status === 'completed') {
         return unwrapJobResult(data);
@@ -428,10 +471,12 @@ function App() {
       return;
     }
 
+    const hasFiles = fileList.length > 0;
     setLoading(true);
     setUploadResult(null);
     setUploadError(null);
     setJobStatus(null);
+    setStatusMessage(hasFiles ? 'Preparing upload…' : 'Creating job…');
     setExpandedRow(null);
 
     const formData = new FormData();
@@ -445,27 +490,50 @@ function App() {
     try {
       const response = await axios.post(`${API_URL}/api/jobs`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (event) => {
+          if (!hasFiles) {
+            return;
+          }
+          if (!event.total) {
+            setStatusMessage('Uploading file…');
+            return;
+          }
+          const pct = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          if (pct >= 100) {
+            setStatusMessage('Creating job…');
+          } else {
+            setStatusMessage(`Uploading file… ${pct}%`);
+          }
+        },
       });
       const data = response.data;
 
       if (data.status === 'completed') {
+        setJobStatus(data);
+        setStatusMessage(data.cached ? 'Loading cached results…' : 'Loading results…');
         setUploadResult(unwrapJobResult(data));
         setUploadError(null);
         return;
       }
 
+      if (!data.job_id) {
+        throw new Error('Server did not return a job id');
+      }
+
       setJobStatus(data);
+      setStatusMessage(fallbackJobMessage(data));
       const result = await pollJobUntilDone(data.job_id);
+      setStatusMessage('Loading results…');
       setUploadResult(result);
       setUploadError(null);
     } catch (error) {
       console.error('Upload error:', error);
-      const errorMessage = error.response?.data?.detail || error.message || 'Upload failed';
-      setUploadError(errorMessage);
+      setUploadError(formatErrorDetail(error));
       setUploadResult(null);
     } finally {
       setLoading(false);
       setJobStatus(null);
+      setStatusMessage(null);
     }
   }, []);
 
@@ -643,21 +711,12 @@ function App() {
             <div className="spinner" role="status" aria-label="Loading" />
             <div className="loading-copy">
               <span className="loading-message">
-                {jobStatus?.message
-                  ? jobStatus.message
-                  : jobStatus?.status === 'queued' && jobStatus.position > 0
-                    ? `Queued (position ${jobStatus.position + 1})…`
-                    : jobStatus?.status === 'queued'
-                      ? 'Queued…'
-                      : jobStatus?.status === 'running' &&
-                          jobStatus.files?.some((file) => file.pending_download)
-                        ? 'Downloading…'
-                        : jobStatus?.status === 'running'
-                          ? 'Processing…'
-                          : 'Submitting…'}
+                {statusMessage || fallbackJobMessage(jobStatus)}
               </span>
-              {jobStatus?.status === 'running' && jobStatus.message && (
-                <span className="loading-hint">Analysis in progress</span>
+              {(jobStatus?.status === 'queued' || jobStatus?.status === 'running') && (
+                <span className="loading-hint">
+                  {jobStatus.status === 'queued' ? 'Job queued' : 'Analysis in progress'}
+                </span>
               )}
             </div>
           </div>
@@ -677,7 +736,14 @@ function App() {
               {uploadResult.processing.analysis_error}
             </div>
           )}
-          {uploadResult.processing?.analyzed_occurrences && (
+          {!uploadResult.processing?.analyzed_occurrences?.length && (
+            <div className="alert alert-warning">
+              {uploadResult.processing?.occurrence_file_found === false
+                ? 'No occurrence table was found in the uploaded files.'
+                : 'No species occurrences were available to analyze.'}
+            </div>
+          )}
+          {uploadResult.processing?.analyzed_occurrences?.length > 0 && (
             <section className="results">
               <div className="results-header">
                 <h2>Analysis results</h2>

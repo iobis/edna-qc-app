@@ -76,16 +76,17 @@ def create_job(
     cache_key: str,
     file_infos: List[Dict[str, Any]],
     job_id: Optional[str] = None,
+    message: Optional[str] = "Waiting in queue…",
 ) -> str:
     if not job_id:
         job_id = str(uuid.uuid4())
     with _connect() as conn:
         conn.execute(
             """
-            INSERT INTO jobs (id, cache_key, status, file_infos, created_at)
-            VALUES (?, ?, 'queued', ?, ?)
+            INSERT INTO jobs (id, cache_key, status, file_infos, message, created_at)
+            VALUES (?, ?, 'queued', ?, ?, ?)
             """,
-            (job_id, cache_key, json.dumps(file_infos), _utcnow_iso()),
+            (job_id, cache_key, json.dumps(file_infos), message, _utcnow_iso()),
         )
         conn.commit()
     return job_id
@@ -142,16 +143,17 @@ def claim_next_job() -> Optional[Dict[str, Any]]:
         updated = conn.execute(
             """
             UPDATE jobs
-            SET status = 'running', started_at = ?
+            SET status = 'running', started_at = ?, message = ?
             WHERE id = ? AND status = 'queued'
             """,
-            (started_at, row["id"]),
+            (started_at, "Starting analysis…", row["id"]),
         )
         if updated.rowcount != 1:
             return None
         job = dict(row)
         job["status"] = "running"
         job["started_at"] = started_at
+        job["message"] = "Starting analysis…"
         return _row_to_dict(job)
 
 

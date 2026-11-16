@@ -47,6 +47,9 @@ DENSITY_MAP_MIN_SUITABILITY = float(os.environ.get("DENSITY_MAP_MIN_SUITABILITY"
 # Cells in the same band share one dissolved polygon. The cache kind must change with the width.
 SUITABILITY_BIN_WIDTH = 0.05
 SUITABILITY_CACHE_KIND = "suitability_b05"
+# h3.cells_to_geo can native-segfault on very large contiguous sets (e.g. 5k+
+# ocean cells). Split first so dissolve never hands the C API a huge batch.
+H3_DISSOLVE_MAX_CELLS = int(os.environ.get("H3_DISSOLVE_MAX_CELLS", "400"))
 CONGENER_MIN_DENSITY = float(
     os.environ.get("CONGENER_MIN_DENSITY", str(DENSITY_MAP_MIN_DENSITY))
 )
@@ -185,6 +188,17 @@ def _round_geometry(geometry: dict, ndigits: int = 4) -> dict:
     }
 
 
+def _split_cells_by_longitude(cells: List[str], lon_of: dict) -> Tuple[List[str], List[str]]:
+    lons = [lon_of[cell] for cell in cells]
+    mid = sorted(lons)[len(lons) // 2]
+    left = [cell for cell, lon in zip(cells, lons) if lon <= mid]
+    right = [cell for cell, lon in zip(cells, lons) if lon > mid]
+    if not left or not right:
+        half = max(1, len(cells) // 2)
+        left, right = cells[:half], cells[half:]
+    return left, right
+
+
 def _dissolve_h3_cells(cells: List[str], lon_of: dict) -> List[dict]:
     """Union H3 cells into polygons.
 
@@ -196,6 +210,11 @@ def _dissolve_h3_cells(cells: List[str], lon_of: dict) -> List[dict]:
         return []
 
     if len(cells) > 1:
+        # Avoid native h3 crashes on huge unions by splitting first.
+        if len(cells) > H3_DISSOLVE_MAX_CELLS:
+            left, right = _split_cells_by_longitude(cells, lon_of)
+            return _dissolve_h3_cells(left, lon_of) + _dissolve_h3_cells(right, lon_of)
+
         geometry = None
         try:
             geometry = h3.cells_to_geo(cells)
@@ -204,13 +223,7 @@ def _dissolve_h3_cells(cells: List[str], lon_of: dict) -> List[dict]:
         if geometry is not None and _geometry_is_valid(geometry):
             return [_round_geometry(geometry)]
 
-        lons = [lon_of[cell] for cell in cells]
-        mid = sorted(lons)[len(lons) // 2]
-        left = [cell for cell, lon in zip(cells, lons) if lon <= mid]
-        right = [cell for cell, lon in zip(cells, lons) if lon > mid]
-        if not left or not right:
-            half = len(cells) // 2
-            left, right = cells[:half], cells[half:]
+        left, right = _split_cells_by_longitude(cells, lon_of)
         return _dissolve_h3_cells(left, lon_of) + _dissolve_h3_cells(right, lon_of)
 
     single = _h3_polygon_geometry(cells[0])

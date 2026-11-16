@@ -95,6 +95,17 @@ def get_cached_response(cache_key: str) -> Optional[Dict[str, Any]]:
     if not isinstance(response, dict):
         return None
 
+    processing = response.get("processing")
+    analyzed = processing.get("analyzed_occurrences") if isinstance(processing, dict) else None
+    if not isinstance(analyzed, list) or not analyzed:
+        # Incomplete/empty entries (e.g. zip never extracted) must not short-circuit jobs.
+        logger.warning("Ignoring incomplete cache entry %s", cache_key)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None
+
     response = dict(response)
     response["cached"] = True
     response["cache_key"] = cache_key

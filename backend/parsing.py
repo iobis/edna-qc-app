@@ -75,10 +75,30 @@ def find_dna_derived_data_file(filenames: List[str]) -> Optional[str]:
     return None
 
 
+def _target_gene_from_row(row: Dict) -> str:
+    """Prefer target_gene; fall back to primer name when datasets omit the gene."""
+    target_gene = _cell_value(row, 'target_gene')
+    if target_gene:
+        return target_gene
+    forward = _cell_value(row, 'pcr_primer_name_forward')
+    if forward:
+        for suffix in ('.For', '.Forward', '.F', '_F', '-F'):
+            if forward.endswith(suffix):
+                return forward[: -len(suffix)]
+        return forward
+    reverse = _cell_value(row, 'pcr_primer_name_reverse')
+    if reverse:
+        for suffix in ('.Rev', '.Reverse', '.R', '_R', '-R'):
+            if reverse.endswith(suffix):
+                return reverse[: -len(suffix)]
+        return reverse
+    return ''
+
+
 def _markers_from_flat_fields(row: Dict) -> Dict[str, str]:
     """Build gene -> sequence map from flat DNA_sequence / target_gene fields."""
     sequence = _cell_value(row, 'DNA_sequence')
-    target_gene = _cell_value(row, 'target_gene')
+    target_gene = _target_gene_from_row(row)
     if not sequence and not target_gene:
         return {}
     # Flat target_gene may already be a joined display string; only trust it when
@@ -160,53 +180,80 @@ def _apply_markers_to_row(row: Dict, markers: Dict[str, str]) -> None:
         row.pop('DNA_sequence', None)
 
 
-def build_dna_sequence_index(dna_rows: List[Dict]) -> Dict[str, Dict[str, str]]:
+def build_dna_sequence_index(
+    dna_rows: List[Dict],
+    join_field: str = 'occurrenceID',
+) -> Dict[str, Dict[str, str]]:
     """
-    Build DNA marker index by occurrenceID.
+    Build DNA marker index keyed by the DNA-side join field.
 
-    Each occurrenceID maps to {target_gene: DNA_sequence}, keeping the first
-    non-empty example sequence per gene. Rows without a gene use '' as the key.
+    Each key maps to {target_gene: DNA_sequence}, keeping the first non-empty
+    example sequence per gene. Rows without a gene use '' as the key.
     """
-    by_occurrence_id: Dict[str, Dict[str, str]] = {}
+    by_join_id: Dict[str, Dict[str, str]] = {}
 
     for row in dna_rows:
-        occurrence_id = _cell_value(row, 'occurrenceID')
-        if not occurrence_id:
+        join_id = _cell_value(row, join_field)
+        if not join_id:
             continue
 
         sequence = _cell_value(row, 'DNA_sequence')
-        target_gene = _cell_value(row, 'target_gene')
+        target_gene = _target_gene_from_row(row)
         if not sequence and not target_gene:
             continue
 
-        markers = by_occurrence_id.setdefault(occurrence_id, {})
+        markers = by_join_id.setdefault(join_id, {})
         if target_gene not in markers:
             markers[target_gene] = sequence
         elif sequence and not markers[target_gene]:
             markers[target_gene] = sequence
 
-    return by_occurrence_id
+    return by_join_id
+
+
+def _resolve_dna_join_fields(
+    occurrence_headers,
+    dna_headers,
+) -> Optional[Tuple[str, str]]:
+    """
+    Choose (occurrence_field, dna_field) for joining DNADerivedData.
+
+    Prefer occurrenceID on both sides. Fall back to DwC-A coreid linking where
+    the extension's `id` column points at the core table's `id`.
+    """
+    occ = set(occurrence_headers)
+    dna = set(dna_headers)
+    if 'occurrenceID' in dna and 'occurrenceID' in occ:
+        return ('occurrenceID', 'occurrenceID')
+    if 'id' in dna and 'id' in occ:
+        return ('id', 'id')
+    if 'id' in dna and 'occurrenceID' in occ:
+        # Some IPT exports reuse the same identifiers in both columns.
+        return ('occurrenceID', 'id')
+    return None
 
 
 def enrich_occurrences_with_dna_sequences(
     occurrence_rows: List[Dict],
     dna_rows: List[Dict],
+    occurrence_join_field: str = 'occurrenceID',
+    dna_join_field: str = 'occurrenceID',
 ) -> Tuple[List[Dict], Dict]:
     """
-    Attach DNA markers (target_gene + example DNA_sequence) joined on occurrenceID.
+    Attach DNA markers (target_gene + example DNA_sequence) via a join key.
 
     Multiple DNADerivedData rows for the same occurrence are collected: one example
     sequence per distinct target_gene. Existing values on the occurrence row are kept.
     """
-    by_occurrence_id = build_dna_sequence_index(dna_rows)
+    by_join_id = build_dna_sequence_index(dna_rows, join_field=dna_join_field)
     enriched: List[Dict] = []
     joined_count = 0
     target_gene_joined_count = 0
 
     for row in occurrence_rows:
         new_row = dict(row)
-        occurrence_id = _cell_value(new_row, 'occurrenceID')
-        dna_markers = by_occurrence_id.get(occurrence_id, {}) if occurrence_id else {}
+        join_id = _cell_value(new_row, occurrence_join_field)
+        dna_markers = by_join_id.get(join_id, {}) if join_id else {}
 
         markers = _merge_marker_maps(
             _markers_from_row(new_row),
@@ -225,7 +272,9 @@ def enrich_occurrences_with_dna_sequences(
         'dna_sequence_joined_count': joined_count,
         'target_gene_joined_count': target_gene_joined_count,
         'dna_row_count': len(dna_rows),
-        'dna_occurrence_id_count': len(by_occurrence_id),
+        'dna_occurrence_id_count': len(by_join_id),
+        'dna_join_occurrence_field': occurrence_join_field,
+        'dna_join_dna_field': dna_join_field,
     }
     return enriched, stats
 
@@ -772,9 +821,14 @@ def process_uploaded_files(
                 'DNA_sequence' in dna_headers or 'target_gene' in dna_headers
             )
             if dna_rows and has_dna_fields:
-                if 'occurrenceID' in dna_headers:
+                join_fields = _resolve_dna_join_fields(parsed[0].keys(), dna_headers)
+                if join_fields:
+                    occ_field, dna_field = join_fields
                     parsed, dna_stats = enrich_occurrences_with_dna_sequences(
-                        parsed, dna_rows
+                        parsed,
+                        dna_rows,
+                        occurrence_join_field=occ_field,
+                        dna_join_field=dna_field,
                     )
                     result['dna_joined'] = True
                     result['dna_columns'] = list(dna_headers)
@@ -782,15 +836,18 @@ def process_uploaded_files(
                     result['parsed_data'] = parsed[:10]
                     result.update(dna_stats)
                     logger.info(
-                        "DNADerivedData join: %d DNA rows, sequences on %d occurrences, "
-                        "target_gene on %d occurrences",
+                        "DNADerivedData join on %s=%s: %d DNA rows, sequences on %d "
+                        "occurrences, target_gene on %d occurrences",
+                        occ_field,
+                        dna_field,
                         dna_stats['dna_row_count'],
                         dna_stats['dna_sequence_joined_count'],
                         dna_stats['target_gene_joined_count'],
                     )
                 else:
                     logger.warning(
-                        "DNA file '%s' found but missing occurrenceID; skipping join",
+                        "DNA file '%s' found but no join key "
+                        "(need occurrenceID or DwC-A id/coreid); skipping join",
                         dna_filename,
                     )
             else:
