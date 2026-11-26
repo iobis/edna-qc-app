@@ -113,18 +113,41 @@ def get_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_queue_position(job_id: str) -> Optional[int]:
+    """Jobs ahead of this queued job (running + earlier queued). 0 = next."""
     job = get_job(job_id)
     if not job or job["status"] != "queued":
         return None
     with _connect() as conn:
-        row = conn.execute(
+        running = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running'"
+        ).fetchone()
+        ahead_queued = conn.execute(
             """
-            SELECT COUNT(*) AS ahead FROM jobs
+            SELECT COUNT(*) AS n FROM jobs
             WHERE status = 'queued' AND created_at < ?
             """,
             (job["created_at"],),
         ).fetchone()
-    return int(row["ahead"]) if row else None
+    return int(running["n"] if running else 0) + int(
+        ahead_queued["n"] if ahead_queued else 0
+    )
+
+
+def get_active_queue_size() -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued', 'running')"
+        ).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def queued_status_message(ahead: int, queue_size: int) -> str:
+    if ahead <= 0:
+        if queue_size <= 1:
+            return "Waiting in queue…"
+        return f"Next in queue ({queue_size} in queue)…"
+    ahead_label = "1 job" if ahead == 1 else f"{ahead} jobs"
+    return f"Waiting in queue ({ahead_label} ahead, {queue_size} in queue)…"
 
 
 def claim_next_job() -> Optional[Dict[str, Any]]:
@@ -264,7 +287,12 @@ def job_to_api_response(job: Dict[str, Any], result: Optional[Dict[str, Any]] = 
     }
     if job["status"] == "queued":
         position = get_queue_position(job["id"])
-        response["position"] = position if position is not None else 0
+        ahead = position if position is not None else 0
+        queue_size = get_active_queue_size()
+        response["position"] = ahead
+        response["queue_size"] = queue_size
+        # Refresh on every poll so the count drops as earlier jobs finish.
+        response["message"] = queued_status_message(ahead, queue_size)
     if result is not None:
         response["result"] = result
         response["processing"] = result.get("processing")

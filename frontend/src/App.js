@@ -426,14 +426,25 @@ function App() {
     if (!data) {
       return 'Starting…';
     }
+    if (data.status === 'queued') {
+      const ahead = typeof data.position === 'number' ? data.position : null;
+      const queueSize = typeof data.queue_size === 'number' ? data.queue_size : null;
+      if (ahead != null && queueSize != null) {
+        if (ahead <= 0) {
+          return queueSize <= 1
+            ? 'Waiting in queue…'
+            : `Next in queue (${queueSize} in queue)…`;
+        }
+        const aheadLabel = ahead === 1 ? '1 job' : `${ahead} jobs`;
+        return `Waiting in queue (${aheadLabel} ahead, ${queueSize} in queue)…`;
+      }
+      if (data.message) {
+        return data.message;
+      }
+      return 'Waiting in queue…';
+    }
     if (data.message) {
       return data.message;
-    }
-    if (data.status === 'queued' && data.position > 0) {
-      return `Queued (position ${data.position + 1})…`;
-    }
-    if (data.status === 'queued') {
-      return 'Waiting in queue…';
     }
     if (data.status === 'running') {
       if (data.files?.some((file) => file.pending_download)) {
@@ -715,7 +726,11 @@ function App() {
               </span>
               {(jobStatus?.status === 'queued' || jobStatus?.status === 'running') && (
                 <span className="loading-hint">
-                  {jobStatus.status === 'queued' ? 'Job queued' : 'Analysis in progress'}
+                  {jobStatus.status === 'queued'
+                    ? (typeof jobStatus.queue_size === 'number'
+                      ? `${jobStatus.queue_size} in queue`
+                      : 'Job queued')
+                    : 'Analysis in progress'}
                 </span>
               )}
             </div>
