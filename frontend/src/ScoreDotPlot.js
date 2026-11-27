@@ -22,7 +22,7 @@ function scoreColor(score) {
   return interpolateMagma(0.25 + t * 0.5);
 }
 
-export default function ScoreDotPlot({ occurrences }) {
+export default function ScoreDotPlot({ occurrences, onPointClick }) {
   const [hover, setHover] = useState(null);
 
   const points = useMemo(() => {
@@ -40,6 +40,7 @@ export default function ScoreDotPlot({ occurrences }) {
           suitability,
           score,
           color: scoreColor(score),
+          occurrence: occ,
         };
       })
       .filter(Boolean);
@@ -120,28 +121,24 @@ export default function ScoreDotPlot({ occurrences }) {
             const cx = scaleLinear(p.density, INNER_W);
             const cy = INNER_H - scaleLinear(p.suitability, INNER_H);
             const active = hover?.key === p.key;
+            const showTooltip = (event) => {
+              const container = event.currentTarget.closest('.score-dotplot');
+              const rect = container.getBoundingClientRect();
+              setHover({
+                key: p.key,
+                name: p.name,
+                density: p.density,
+                suitability: p.suitability,
+                score: p.score,
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top,
+              });
+            };
             return (
-              <circle
+              <g
                 key={p.key}
-                className={`score-dotplot-point${active ? ' is-active' : ''}`}
-                cx={cx}
-                cy={cy}
-                r={active ? 4 : 2.75}
-                fill={p.color}
-                stroke={p.color}
-                onMouseEnter={(event) => {
-                  const container = event.currentTarget.closest('.score-dotplot');
-                  const rect = container.getBoundingClientRect();
-                  setHover({
-                    key: p.key,
-                    name: p.name,
-                    density: p.density,
-                    suitability: p.suitability,
-                    score: p.score,
-                    x: event.clientX - rect.left,
-                    y: event.clientY - rect.top,
-                  });
-                }}
+                className="score-dotplot-hit"
+                onMouseEnter={showTooltip}
                 onMouseMove={(event) => {
                   const container = event.currentTarget.closest('.score-dotplot');
                   const rect = container.getBoundingClientRect();
@@ -156,9 +153,20 @@ export default function ScoreDotPlot({ occurrences }) {
                   );
                 }}
                 onMouseLeave={() => setHover(null)}
+                onClick={() => onPointClick?.(p.occurrence)}
               >
-                <title>{p.name}</title>
-              </circle>
+                <circle className="score-dotplot-target" cx={cx} cy={cy} r={6} />
+                <circle
+                  className={`score-dotplot-point${active ? ' is-active' : ''}`}
+                  cx={cx}
+                  cy={cy}
+                  r={active ? 4 : 2.75}
+                  fill={p.color}
+                  stroke={p.color}
+                >
+                  <title>{p.name}</title>
+                </circle>
+              </g>
             );
           })}
         </g>

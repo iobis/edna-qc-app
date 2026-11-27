@@ -207,6 +207,8 @@ function App() {
   const [recordsCache, setRecordsCache] = useState({});
   const [mapLoading, setMapLoading] = useState(null);
   const [mapErrors, setMapErrors] = useState({});
+  const [plotReturn, setPlotReturn] = useState(null);
+  const plotScrollRef = useRef(null);
 
   const ANNOTATIONS_STORAGE_KEY = 'occurrenceAnnotations';
 
@@ -586,12 +588,7 @@ function App() {
     setExpandedRow(null);
   };
 
-  const toggleRowExpand = async (rowKey, occurrence) => {
-    if (expandedRow === rowKey) {
-      setExpandedRow(null);
-      return;
-    }
-
+  const openOccurrenceRow = async (rowKey, occurrence) => {
     setExpandedRow(rowKey);
 
     const aphiaid = occurrence.aphiaid;
@@ -655,6 +652,49 @@ function App() {
     } finally {
       setMapLoading(null);
     }
+  };
+
+  const toggleRowExpand = (rowKey, occurrence) => {
+    if (expandedRow === rowKey) {
+      setExpandedRow(null);
+      return;
+    }
+    void openOccurrenceRow(rowKey, occurrence);
+  };
+
+  useEffect(() => {
+    if (!plotReturn || expandedRow === plotReturn.rowKey) {
+      return;
+    }
+    plotScrollRef.current = null;
+    setPlotReturn(null);
+  }, [expandedRow, plotReturn]);
+
+  const revealOccurrenceFromPlot = (occurrence) => {
+    const rowKey = getAnnotationKey(occurrence);
+    if (plotScrollRef.current == null) {
+      plotScrollRef.current = window.scrollY;
+    }
+    setPlotReturn({ scrollY: plotScrollRef.current, rowKey });
+    if (expandedRow !== rowKey) {
+      void openOccurrenceRow(rowKey, occurrence);
+    }
+    window.requestAnimationFrame(() => {
+      const row = document.querySelector(
+        `[data-row-key="${window.CSS.escape(rowKey)}"]`
+      );
+      row?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  const returnToPlot = () => {
+    const top = plotScrollRef.current ?? plotReturn?.scrollY;
+    plotScrollRef.current = null;
+    setPlotReturn(null);
+    if (top == null) {
+      return;
+    }
+    window.scrollTo({ top, behavior: 'smooth' });
   };
 
   return (
@@ -788,7 +828,10 @@ function App() {
                   </div>
                 )}
               </div>
-              <ScoreDotPlot occurrences={uploadResult.processing.analyzed_occurrences} />
+              <ScoreDotPlot
+                occurrences={uploadResult.processing.analyzed_occurrences}
+                onPointClick={revealOccurrenceFromPlot}
+              />
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -827,7 +870,10 @@ function App() {
                         const records = occurrence.aphiaid ? recordsCache[occurrence.aphiaid] : undefined;
                         return (
                           <React.Fragment key={rowKey}>
-                            <tr className={isExpanded ? 'row-expanded' : undefined}>
+                            <tr
+                              data-row-key={rowKey}
+                              className={isExpanded ? 'row-expanded' : undefined}
+                            >
                               <td className="col-toggle">
                                 {occurrence.aphiaid ? (
                                   <button
@@ -949,6 +995,21 @@ function App() {
             </section>
           )}
         </>
+      )}
+      {plotReturn && (
+        <button type="button" className="back-to-plot" onClick={returnToPlot}>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M8 3.5 3.5 8.2M8 3.5l4.5 4.7M8 3.5V13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Back to plot
+        </button>
       )}
     </div>
   );

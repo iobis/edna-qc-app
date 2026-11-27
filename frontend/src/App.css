@@ -343,11 +343,19 @@ a:hover {
   font-weight: 500;
 }
 
+.score-dotplot-hit {
+  cursor: pointer;
+}
+
+.score-dotplot-target {
+  fill: transparent;
+}
+
 .score-dotplot-point {
   fill-opacity: 0.75;
   stroke-opacity: 0.95;
   stroke-width: 1;
-  cursor: default;
+  pointer-events: none;
 }
 
 .score-dotplot-point.is-active {
@@ -378,6 +386,36 @@ a:hover {
   margin-top: 0.15rem;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.back-to-plot {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.14);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.back-to-plot svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.back-to-plot:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .table-wrap {
@@ -598,6 +636,10 @@ td.species {
 
 .row-expanded {
   background: rgba(26, 107, 92, 0.04);
+}
+
+tr[data-row-key] {
+  scroll-margin-top: 0.75rem;
 }
 
 .expand-row td {
