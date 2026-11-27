@@ -47,8 +47,9 @@ DENSITY_MAP_MIN_SUITABILITY = float(os.environ.get("DENSITY_MAP_MIN_SUITABILITY"
 # Cells in the same band share one dissolved polygon. The cache kind must change with the width.
 SUITABILITY_BIN_WIDTH = 0.05
 SUITABILITY_CACHE_KIND = "suitability_b05"
-# h3.cells_to_geo can native-segfault on very large contiguous sets (e.g. 5k+
-# ocean cells). Split first so dissolve never hands the C API a huge batch.
+# h3 4.2.1 segfaults inside cells_to_geo on some ocean outlines of ~100 cells
+# (h3 4.5.1 does not). Keep batches small so an older build cannot take the
+# API process down while drawing a suitability map.
 H3_DISSOLVE_MAX_CELLS = int(os.environ.get("H3_DISSOLVE_MAX_CELLS", "400"))
 CONGENER_MIN_DENSITY = float(
     os.environ.get("CONGENER_MIN_DENSITY", str(DENSITY_MAP_MIN_DENSITY))
