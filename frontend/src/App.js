@@ -814,7 +814,7 @@ function App() {
       <header className="header">
         <h1>
           <a href="/" className="header-home">
-            Geographic outlier detection
+            Geographic and thermal outlier detection
           </a>
         </h1>
         <div className="intro">
