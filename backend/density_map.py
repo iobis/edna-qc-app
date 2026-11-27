@@ -7,7 +7,6 @@ import os
 import threading
 import time
 
-import antimeridian
 import h3
 
 from grid_products import (
@@ -23,7 +22,6 @@ from grid_products import (
 )
 from map_cache import (
     MAP_CACHE_VERSION,
-    apply_occurrence_flag,
     get_cached_json,
     get_cached_map,
     store_cached_json,
@@ -44,13 +42,9 @@ SPECIESGRIDS_DIR = os.environ.get(
 )
 DENSITY_MAP_MIN_DENSITY = float(os.environ.get("DENSITY_MAP_MIN_DENSITY", "0.08"))
 DENSITY_MAP_MIN_SUITABILITY = float(os.environ.get("DENSITY_MAP_MIN_SUITABILITY", "0.08"))
-# Cells in the same band share one dissolved polygon. The cache kind must change with the width.
-SUITABILITY_BIN_WIDTH = 0.05
-SUITABILITY_CACHE_KIND = "suitability_b05"
-# h3 4.2.1 segfaults inside cells_to_geo on some ocean outlines of ~100 cells
-# (h3 4.5.1 does not). Keep batches small so an older build cannot take the
-# API process down while drawing a suitability map.
-H3_DISSOLVE_MAX_CELLS = int(os.environ.get("H3_DISSOLVE_MAX_CELLS", "400"))
+# Cache kinds changed when responses became cell indexes instead of polygons.
+DENSITY_CACHE_KIND = "density_cells"
+SUITABILITY_CACHE_KIND = "suitability_cells"
 CONGENER_MIN_DENSITY = float(
     os.environ.get("CONGENER_MIN_DENSITY", str(DENSITY_MAP_MIN_DENSITY))
 )
@@ -87,8 +81,6 @@ _GENUS_QUALIFIERS = {
     "x",
 }
 
-_h3_geometry_cache: dict = {}
-_h3_geometry_lock = threading.Lock()
 _records_memory_cache: dict = {}
 _records_memory_lock = threading.Lock()
 _RECORDS_MEMORY_MAX = 64
@@ -104,175 +96,15 @@ def _sanitize(value):
     return value
 
 
-def _ring_longitude_span(ring) -> float:
-    lons = [point[0] for point in ring]
-    return max(lons) - min(lons)
-
-
-def _geometry_is_valid(geometry: dict) -> bool:
-    if geometry["type"] == "Polygon":
-        rings = geometry["coordinates"]
-    elif geometry["type"] == "MultiPolygon":
-        rings = [polygon[0] for polygon in geometry["coordinates"]]
-    else:
-        return False
-
-    if not rings:
-        return False
-    return all(ring and _ring_longitude_span(ring) <= 180 for ring in rings)
-
-
-def _h3_polygon_geometry(h3_str: str) -> Optional[dict]:
-    with _h3_geometry_lock:
-        cached = _h3_geometry_cache.get(h3_str)
-    if cached is not None:
-        return cached
-
-    boundary = h3.cell_to_boundary(h3_str)
-    ring = [[lng, lat] for lat, lng in boundary]
-    ring.append(ring[0])
-    geometry = {"type": "Polygon", "coordinates": [ring]}
-
-    if not _geometry_is_valid(geometry):
-        fixed = antimeridian.fix_geojson(geometry)
-        if not _geometry_is_valid(fixed):
-            return None
-        geometry = fixed
-
-    with _h3_geometry_lock:
-        _h3_geometry_cache[h3_str] = geometry
-    return geometry
-
-
-def _build_h3_features(
-    rows: List[Tuple],
-    value_property: str,
-    occurrence_h3: Optional[str] = None,
-) -> List[dict]:
-    if not rows:
-        return []
-
-    features: List[dict] = []
-    for h3_index, value in rows:
-        h3_str = h3_to_str(h3_index) if not isinstance(h3_index, str) else h3_index
-        geometry = _h3_polygon_geometry(h3_str)
-        if geometry is None:
-            continue
-
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": geometry,
-                "properties": {
-                    "h3": h3_str,
-                    value_property: _sanitize(value),
-                    "is_occurrence": h3_str == occurrence_h3 if occurrence_h3 else False,
-                },
-            }
-        )
-
-    return features
-
-
-def _round_coordinates(coords, ndigits: int = 4):
-    if not coords:
-        return coords
-    if isinstance(coords[0], (list, tuple)):
-        return [_round_coordinates(child, ndigits) for child in coords]
-    return [round(float(value), ndigits) for value in coords]
-
-
-def _round_geometry(geometry: dict, ndigits: int = 4) -> dict:
-    return {
-        "type": geometry["type"],
-        "coordinates": _round_coordinates(geometry["coordinates"], ndigits),
-    }
-
-
-def _split_cells_by_longitude(cells: List[str], lon_of: dict) -> Tuple[List[str], List[str]]:
-    lons = [lon_of[cell] for cell in cells]
-    mid = sorted(lons)[len(lons) // 2]
-    left = [cell for cell, lon in zip(cells, lons) if lon <= mid]
-    right = [cell for cell, lon in zip(cells, lons) if lon > mid]
-    if not left or not right:
-        half = max(1, len(cells) // 2)
-        left, right = cells[:half], cells[half:]
-    return left, right
-
-
-def _dissolve_h3_cells(cells: List[str], lon_of: dict) -> List[dict]:
-    """Union H3 cells into polygons.
-
-    Multi-cell outlines are kept only when they already sit on one side of the
-    antimeridian. Repairing a world-sized outline can fill land between ocean
-    cells, so date-line groups fall back to single cells.
-    """
-    if not cells:
-        return []
-
-    if len(cells) > 1:
-        # Avoid native h3 crashes on huge unions by splitting first.
-        if len(cells) > H3_DISSOLVE_MAX_CELLS:
-            left, right = _split_cells_by_longitude(cells, lon_of)
-            return _dissolve_h3_cells(left, lon_of) + _dissolve_h3_cells(right, lon_of)
-
-        geometry = None
-        try:
-            geometry = h3.cells_to_geo(cells)
-        except Exception:
-            logger.debug("cells_to_geo failed for %s cells", len(cells), exc_info=True)
-        if geometry is not None and _geometry_is_valid(geometry):
-            return [_round_geometry(geometry)]
-
-        left, right = _split_cells_by_longitude(cells, lon_of)
-        return _dissolve_h3_cells(left, lon_of) + _dissolve_h3_cells(right, lon_of)
-
-    single = _h3_polygon_geometry(cells[0])
-    return [_round_geometry(single)] if single is not None else []
-
-
-def _build_binned_suitability_features(
-    rows: List[Tuple],
-    bin_width: float = SUITABILITY_BIN_WIDTH,
-) -> List[dict]:
-    """Dissolve same-valued cells so the client does not draw one hex per ocean cell."""
-    grouped: dict = {}
-    sums: dict = {}
+def _cell_pairs(rows: List[Tuple], digits: int = 4) -> List[list]:
+    """[h3 index, value] pairs. Polygons are built in the browser."""
+    cells: List[list] = []
     for h3_index, value in rows:
         if value is None or (isinstance(value, float) and math.isnan(value)):
             continue
-        numeric = float(value)
         h3_str = h3_to_str(h3_index) if not isinstance(h3_index, str) else h3_index
-        bin_id = int(math.floor((numeric + 1e-12) / bin_width))
-        grouped.setdefault(bin_id, []).append(h3_str)
-        sums[bin_id] = sums.get(bin_id, 0.0) + numeric
-
-    features: List[dict] = []
-    for bin_id in sorted(grouped):
-        cells = grouped[bin_id]
-        lon_of = {cell: h3.cell_to_latlng(cell)[1] for cell in cells}
-        polygons = []
-        for geometry in _dissolve_h3_cells(cells, lon_of):
-            if geometry["type"] == "Polygon":
-                polygons.append(geometry["coordinates"])
-            elif geometry["type"] == "MultiPolygon":
-                polygons.extend(geometry["coordinates"])
-        if not polygons:
-            continue
-        if len(polygons) == 1:
-            geometry = {"type": "Polygon", "coordinates": polygons[0]}
-        else:
-            geometry = {"type": "MultiPolygon", "coordinates": polygons}
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": geometry,
-                "properties": {
-                    "suitability": round(sums[bin_id] / len(cells), 4),
-                },
-            }
-        )
-    return features
+        cells.append([h3_str, round(float(value), digits)])
+    return cells
 
 
 def _speciesgrids_parquet_paths() -> List[str]:
@@ -310,35 +142,6 @@ def _occurrence_h3_str(lon: Optional[float], lat: Optional[float]) -> Optional[s
     if lon is None or lat is None:
         return None
     return h3_to_str(latlng_to_h3_int(float(lat), float(lon)))
-
-
-def _ensure_occurrence_feature(
-    features: List[dict],
-    value_property: str,
-    occurrence_h3: Optional[str],
-    occurrence_value: Optional[float],
-) -> List[dict]:
-    if not occurrence_h3:
-        return features
-    for feature in features:
-        if feature.get("properties", {}).get("h3") == occurrence_h3:
-            return features
-    if occurrence_value is None:
-        return features
-    geometry = _h3_polygon_geometry(occurrence_h3)
-    if geometry is None:
-        return features
-    return features + [
-        {
-            "type": "Feature",
-            "geometry": geometry,
-            "properties": {
-                "h3": occurrence_h3,
-                value_property: _sanitize(occurrence_value),
-                "is_occurrence": True,
-            },
-        }
-    ]
 
 
 def get_speciesgrids_records_geojson(aphiaid: int) -> dict:
@@ -404,7 +207,7 @@ def get_density_geojson(
     aid = int(aphiaid)
     occurrence_h3_str = _occurrence_h3_str(lon, lat)
 
-    cached = get_cached_map("density", aid, DENSITY_MAP_MIN_DENSITY)
+    cached = get_cached_map(DENSITY_CACHE_KIND, aid, DENSITY_MAP_MIN_DENSITY)
     if cached is None:
         conn = open_h3_connection()
         rows = density_rows_for_aphiaid(
@@ -424,48 +227,39 @@ def get_density_geojson(
                     f"No density map found for AphiaID {aphiaid} in {DENSITY_PATH}"
                 )
 
-        features = _build_h3_features(rows, "density", occurrence_h3=None)
-        cached = {"type": "FeatureCollection", "features": features}
-        store_cached_map("density", aid, DENSITY_MAP_MIN_DENSITY, cached)
+        cells = _cell_pairs(rows)
+        cached = {"cells": cells}
+        store_cached_map(DENSITY_CACHE_KIND, aid, DENSITY_MAP_MIN_DENSITY, cached)
         logger.info(
-            "Built density map cache for AphiaID %s (%s features)",
+            "Built density map cache for AphiaID %s (%s cells)",
             aid,
-            len(features),
+            len(cells),
         )
 
-    payload = apply_occurrence_flag(cached, occurrence_h3_str)
+    cells = list(cached.get("cells") or [])
 
-    # Include occurrence cell even when below the display threshold.
-    if occurrence_h3_str:
-        present = {
-            f["properties"]["h3"] for f in payload["features"] if f.get("properties")
-        }
-        if occurrence_h3_str not in present:
-            conn = open_h3_connection()
-            occurrence_h3_int = latlng_to_h3_int(float(lat), float(lon))
-            cell_rows = density_rows_for_aphiaid(
-                conn,
-                aid,
-                0.0,
-                occurrence_h3=occurrence_h3_int,
-            )
-            value = next(
-                (
-                    dens
-                    for h3_cell, dens in cell_rows
-                    if h3_to_str(h3_cell) == occurrence_h3_str
-                ),
-                0.0,
-            )
-            payload["features"] = _ensure_occurrence_feature(
-                payload["features"],
-                "density",
-                occurrence_h3_str,
-                value,
-            )
+    # Include the occurrence cell even when it is below the display threshold.
+    if occurrence_h3_str and all(cell[0] != occurrence_h3_str for cell in cells):
+        conn = open_h3_connection()
+        occurrence_h3_int = latlng_to_h3_int(float(lat), float(lon))
+        cell_rows = density_rows_for_aphiaid(
+            conn,
+            aid,
+            0.0,
+            occurrence_h3=occurrence_h3_int,
+        )
+        value = next(
+            (
+                dens
+                for h3_cell, dens in cell_rows
+                if h3_to_str(h3_cell) == occurrence_h3_str
+            ),
+            0.0,
+        )
+        cells.append([occurrence_h3_str, round(float(value), 4)])
 
     return {
-        **payload,
+        "cells": cells,
         "occurrence": {"lon": lon, "lat": lat} if lon is not None and lat is not None else None,
     }
 
@@ -490,20 +284,18 @@ def get_suitability_geojson(
             for h3_cell, value in all_rows
             if value >= DENSITY_MAP_MIN_SUITABILITY
         ]
-        features = _build_binned_suitability_features(rows)
-        cached = {"type": "FeatureCollection", "features": features}
+        cells = _cell_pairs(rows)
+        cached = {"cells": cells}
         store_cached_map(SUITABILITY_CACHE_KIND, aid, DENSITY_MAP_MIN_SUITABILITY, cached)
         logger.info(
-            "Built suitability map cache for AphiaID %s (%s features from %s cells, %.2fs)",
+            "Built suitability map cache for AphiaID %s (%s cells, %.2fs)",
             aid,
-            len(features),
-            len(rows),
+            len(cells),
             time.perf_counter() - started,
         )
 
     return {
-        "type": "FeatureCollection",
-        "features": cached.get("features", []),
+        "cells": list(cached.get("cells") or []),
         "occurrence": {"lon": lon, "lat": lat} if lon is not None and lat is not None else None,
     }
 

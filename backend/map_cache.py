@@ -1,4 +1,4 @@
-"""Disk + memory cache for density/suitability map GeoJSON."""
+"""Disk + memory cache for density and suitability map payloads."""
 
 from __future__ import annotations
 
@@ -108,24 +108,3 @@ def _remember(key: str, payload: dict) -> None:
         if oldest == key:
             break
         del _memory[oldest]
-
-
-def apply_occurrence_flag(payload: dict, occurrence_h3: Optional[str]) -> dict:
-    """Return a shallow-copied FeatureCollection with is_occurrence flags set."""
-    features = []
-    for feature in payload.get("features", []):
-        props = dict(feature.get("properties") or {})
-        props["is_occurrence"] = bool(
-            occurrence_h3 and props.get("h3") == occurrence_h3
-        )
-        features.append(
-            {
-                "type": feature.get("type", "Feature"),
-                "geometry": feature.get("geometry"),
-                "properties": props,
-            }
-        )
-    return {
-        "type": "FeatureCollection",
-        "features": features,
-    }

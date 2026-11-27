@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import axios from 'axios';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { cellsToFeatureCollection } from './h3Cells';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAP_GEOMETRY_VERSION = 8;
+const MAP_GEOMETRY_VERSION = 9;
 
 const COASTLINES_LAYER = {
   id: 'coastlines',
@@ -72,8 +73,8 @@ const SUITABILITY_FILL_COLOR = [
   0.2, '#c8ebe3',
   0.4, '#8fd4c4',
   0.6, '#4fb39c',
-  0.8, '#2a8f7a',
-  1, '#1a6b5c',
+  0.8, '#3aa88f',
+  1, '#2a8f7a',
 ];
 
 const SUITABILITY_FILL_OPACITY = [
@@ -102,7 +103,10 @@ function boundsFromGeoJSON(geojson) {
   const bounds = new maplibregl.LngLatBounds();
   for (const feature of geojson.features) {
     for (const coord of coordsFromGeometry(feature.geometry)) {
-      bounds.extend(coord);
+      let lon = coord[0];
+      while (lon > 180) lon -= 360;
+      while (lon < -180) lon += 360;
+      bounds.extend([lon, coord[1]]);
     }
   }
   return bounds;
@@ -157,7 +161,7 @@ function requestSuitability(cacheRef, flightRef, speciesId, speciesLon, speciesL
     return inflight;
   }
 
-  const params = new URLSearchParams({ v: `${MAP_GEOMETRY_VERSION}-b05` });
+  const params = new URLSearchParams({ v: String(MAP_GEOMETRY_VERSION) });
   if (speciesLon != null) {
     params.set('lon', String(speciesLon));
   }
@@ -178,8 +182,8 @@ function requestSuitability(cacheRef, flightRef, speciesId, speciesLon, speciesL
   return promise;
 }
 
-function setSuitabilityLayerData(map, suitabilityGeojson, visible) {
-  const data = suitabilityGeojson || { type: 'FeatureCollection', features: [] };
+function setSuitabilityLayerData(map, payload, visible) {
+  const data = cellsToFeatureCollection(payload?.cells, 'suitability');
   const source = map.getSource('suitability');
   if (source) {
     source.setData(data);
@@ -438,6 +442,7 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
 
     setMapError(null);
     layersReadyRef.current = false;
+    const densityGeo = cellsToFeatureCollection(geojson.cells, 'density');
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -458,7 +463,7 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
     map.getCanvas().addEventListener('mouseleave', disableScrollZoom);
 
     map.on('load', () => {
-      map.addSource('density', { type: 'geojson', data: geojson });
+      map.addSource('density', { type: 'geojson', data: densityGeo });
 
       map.addLayer({
         id: 'density-fill',
@@ -520,7 +525,7 @@ function DensityMap({ geojson, records, aphiaid, scientificName, lon, lat }) {
       }
 
       try {
-        const bounds = boundsFromGeoJSON(geojson);
+        const bounds = boundsFromGeoJSON(densityGeo);
         if (lon != null && lat != null) {
           bounds.extend([lon, lat]);
         }

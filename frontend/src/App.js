@@ -9,7 +9,7 @@ import './App.css';
 // Use relative URL if REACT_APP_API_URL is empty, otherwise use the provided URL
 // Empty string means use relative URLs (works with nginx proxy)
 const API_URL = process.env.REACT_APP_API_URL || '';
-const MAP_GEOMETRY_VERSION = 8;
+const MAP_GEOMETRY_VERSION = 9;
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip', '.xlsx'];
 
