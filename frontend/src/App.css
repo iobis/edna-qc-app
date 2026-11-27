@@ -42,7 +42,7 @@ body {
 }
 
 .header h1 {
-  margin: 0 0 0.75rem;
+  margin: 0 0 1rem;
   font-size: 1.75rem;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -54,15 +54,65 @@ body {
   text-decoration: none;
 }
 
-.header p {
+.intro {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.intro-copy p {
   margin: 0;
-  max-width: none;
   color: var(--text-muted);
   font-size: 0.9375rem;
-  column-count: 2;
-  column-gap: 2rem;
-  text-align: justify;
-  hyphens: auto;
+}
+
+.intro-copy p + p {
+  margin-top: 0.75rem;
+}
+
+.intro-fields {
+  margin: 0;
+  padding: 0.9rem 1rem 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.intro-fields h2 {
+  margin: 0 0 0.55rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.intro-fields h2:not(:first-child) {
+  margin-top: 0.35rem;
+}
+
+.intro-fields ul {
+  margin: 0 0 0.85rem;
+  padding: 0;
+  list-style: none;
+}
+
+.intro-fields li {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.intro-fields li span {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-muted);
+}
+
+.intro-fields code.dwca-term + code.dwca-term {
+  margin-left: 0.4rem;
 }
 
 .dwca-term {
@@ -978,9 +1028,8 @@ tbody tr:not(.expand-row):hover {
     font-size: 1.5rem;
   }
 
-  .header p {
-    column-count: 1;
-    text-align: left;
+  .intro {
+    grid-template-columns: 1fr;
   }
 
   .card {

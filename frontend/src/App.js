@@ -817,21 +817,51 @@ function App() {
             Geographic outlier detection
           </a>
         </h1>
-        <p>
-          This app performs spatial and environmental outlier detection on species occurrence data.
-          Upload Darwin Core text separated data files or a Darwin Core Archive, or point to a hosted Darwin Core Archive using a URL.
-          Wilderlab sample-batch <code className="dwca-term">.xlsx</code> exports are also supported (sheets <code className="dwca-term">metadata</code>, <code className="dwca-term">aggregated</code>, and optionally <code className="dwca-term">full</code>).
-          Datasets should include coordinates in the <code className="dwca-term">decimalLongitude</code> and <code className="dwca-term">decimalLatitude</code> columns (for Wilderlab, coordinates come from the metadata sample table).
-          For Event Core archives, coordinates may live on the event table (or parent events via <code className="dwca-term">parentEventID</code>) and are inherited when the occurrence lacks them.
-          If no WoRMS LSIDs are provided in the <code className="dwca-term">scientificNameID</code> column, taxon matching is performed against WoRMS, which can slow down processing.
-          Processing can be sped up by providing a <code className="dwca-term">taxonRank</code> column, as only species level occurrences are evaluated.
-          For a typical dataset, the analysis should finish within one minute.
-          Click the{' '}
-          <button type="button" onClick={loadExample} className="example-link">
-            example
-          </button>{' '}
-          to load a sample dataset.
-        </p>
+        <div className="intro">
+          <div className="intro-copy">
+            <p>
+              This app scores species occurrences for spatial and environmental outliers.
+              Upload Darwin Core text files or a Darwin Core Archive, or point to a hosted archive with a URL.
+              A typical dataset finishes within a minute.
+            </p>
+            <p>
+              Some alternative file formats such as Wilderlab's result spreadsheet are supported as well.
+            </p>
+            <p>
+              Click the{' '}
+              <button type="button" onClick={loadExample} className="example-link">
+                example
+              </button>{' '}
+              link to load an example dataset.
+            </p>
+          </div>
+          <aside className="intro-fields">
+            <h2>Required fields</h2>
+            <ul>
+              <li>
+                <code className="dwca-term">scientificName</code>
+              </li>
+              <li>
+                <code className="dwca-term">decimalLongitude</code>
+                <code className="dwca-term">decimalLatitude</code>
+                <span>
+                  Taken from the occurrence, or inherited from the event and its parent events.
+                </span>
+              </li>
+            </ul>
+            <h2>Optional</h2>
+            <ul>
+              <li>
+                <code className="dwca-term">scientificNameID</code>
+                <span>A WoRMS LSID. Supplying it skips name matching and speeds up processing.</span>
+              </li>
+              <li>
+                <code className="dwca-term">taxonRank</code>
+                <span>Only species-level rows are scored.</span>
+              </li>
+            </ul>
+          </aside>
+        </div>
       </header>
 
       <div className="card">
