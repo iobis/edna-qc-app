@@ -13,6 +13,9 @@ const MAP_GEOMETRY_VERSION = 8;
 
 const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip', '.xlsx'];
 
+// Accept/reject and comments stay in the codebase, but are not shown or saved.
+const ANNOTATIONS_ENABLED = false;
+
 const getBadgeStyle = (value, colorScale) => {
   const numValue = parseFloat(value) || 0;
   const color = colorScale(numValue);
@@ -214,9 +217,12 @@ function App() {
     return `${aphiaid}|${lon}|${lat}`;
   };
 
-  const COLUMN_COUNT = 10;
+  const COLUMN_COUNT = ANNOTATIONS_ENABLED ? 10 : 8;
 
   useEffect(() => {
+    if (!ANNOTATIONS_ENABLED) {
+      return;
+    }
     try {
       const stored = window.localStorage.getItem(ANNOTATIONS_STORAGE_KEY);
       if (stored) {
@@ -233,7 +239,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!annotationsLoaded) {
+    if (!ANNOTATIONS_ENABLED || !annotationsLoaded) {
       return;
     }
     try {
@@ -762,23 +768,25 @@ function App() {
             <section className="results">
               <div className="results-header">
                 <h2>Analysis results</h2>
-                <div className="btn-group">
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-sm"
-                    onClick={handleDownloadAnnotations}
-                    disabled={Object.keys(annotations).length === 0}
-                  >
-                    Download annotations
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-outline-danger btn-sm"
-                    onClick={handleClearAnnotations}
-                  >
-                    Clear annotations
-                  </button>
-                </div>
+                {ANNOTATIONS_ENABLED && (
+                  <div className="btn-group">
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={handleDownloadAnnotations}
+                      disabled={Object.keys(annotations).length === 0}
+                    >
+                      Download annotations
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-outline-danger btn-sm"
+                      onClick={handleClearAnnotations}
+                    >
+                      Clear annotations
+                    </button>
+                  </div>
+                )}
               </div>
               <ScoreDotPlot occurrences={uploadResult.processing.analyzed_occurrences} />
               <div className="table-wrap">
@@ -793,8 +801,12 @@ function App() {
                       <th>Coordinates</th>
                       <th>Density</th>
                       <th>Suitability</th>
-                      <th>Annotation</th>
-                      <th>Comments</th>
+                      {ANNOTATIONS_ENABLED && (
+                        <>
+                          <th>Annotation</th>
+                          <th>Comments</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -874,29 +886,33 @@ function App() {
                                 <span className="empty-cell">—</span>
                               )}
                             </td>
-                            <td>
-                              <select
-                                className="form-select form-select-sm"
-                                value={annotationValue}
-                                onChange={(e) =>
-                                  handleAnnotationChange(rowKey, 'annotation', e.target.value)
-                                }
-                              >
-                                <option value="">—</option>
-                                <option value="accept">Accept</option>
-                                <option value="reject">Reject</option>
-                              </select>
-                            </td>
-                            <td>
-                              <input
-                                type="text"
-                                className="form-input form-input-sm"
-                                value={commentsValue}
-                                onChange={(e) =>
-                                  handleAnnotationChange(rowKey, 'comments', e.target.value)
-                                }
-                              />
-                            </td>
+                            {ANNOTATIONS_ENABLED && (
+                              <>
+                                <td>
+                                  <select
+                                    className="form-select form-select-sm"
+                                    value={annotationValue}
+                                    onChange={(e) =>
+                                      handleAnnotationChange(rowKey, 'annotation', e.target.value)
+                                    }
+                                  >
+                                    <option value="">—</option>
+                                    <option value="accept">Accept</option>
+                                    <option value="reject">Reject</option>
+                                  </select>
+                                </td>
+                                <td>
+                                  <input
+                                    type="text"
+                                    className="form-input form-input-sm"
+                                    value={commentsValue}
+                                    onChange={(e) =>
+                                      handleAnnotationChange(rowKey, 'comments', e.target.value)
+                                    }
+                                  />
+                                </td>
+                              </>
+                            )}
                           </tr>
                           {isExpanded && (
                             <tr className="expand-row">
