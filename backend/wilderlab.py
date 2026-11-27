@@ -202,6 +202,7 @@ def wilderlab_aggregated_to_occurrence_rows(
     rank_idx = header.index("Rank") if "Rank" in header else None
     phylum_idx = header.index("Phylum") if "Phylum" in header else None
     class_idx = header.index("Class") if "Class" in header else None
+    order_idx = header.index("Order") if "Order" in header else None
     sample_cols = _wilderlab_sample_columns(header, samples)
     if not sample_cols:
         raise ValueError(
@@ -233,6 +234,11 @@ def wilderlab_aggregated_to_occurrence_rows(
             if class_idx is not None
             else ""
         )
+        order_name = (
+            _wilderlab_cell_str(row[order_idx] if order_idx is not None and order_idx < len(row) else "")
+            if order_idx is not None
+            else ""
+        )
 
         for uid in sample_cols:
             col_idx = header.index(uid)
@@ -252,6 +258,7 @@ def wilderlab_aggregated_to_occurrence_rows(
                 "decimalLongitude": lon,
                 "phylum": phylum,
                 "class": class_name,
+                "order": order_name,
                 "occurrenceID": uid,
             }
             sequence = sequence_index.get((scientific_name, uid))

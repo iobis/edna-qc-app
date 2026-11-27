@@ -495,6 +495,7 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
         scientific_name_id = row.get('scientificNameID', '').strip()
         phylum = row.get('phylum', '').strip()
         class_name = row.get('class', '').strip()
+        order_name = row.get('order', '').strip()
         lon_str = row.get('decimalLongitude', '').strip() if row.get('decimalLongitude') is not None else ''
         lat_str = row.get('decimalLatitude', '').strip() if row.get('decimalLatitude') is not None else ''
         
@@ -517,6 +518,8 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
                 phylum = match.get('phylum', '')
             if not class_name:
                 class_name = match.get('class', '')
+            if not order_name:
+                order_name = match.get('order', '')
             aphiaid = match.get('aphiaid')
             rank = match.get('rank', '')
         else:
@@ -541,6 +544,7 @@ def extract_species_occurrences(parsed_data: List[Dict], name_matches: Optional[
                 'scientificNameID': scientific_name_id,
                 'phylum': phylum,
                 'class': class_name,
+                'order': order_name,
                 'decimalLongitude': lon,
                 'decimalLatitude': lat,
                 'aphiaid': aphiaid,
@@ -574,6 +578,7 @@ def match_names_with_worms(
         - aphiaid: valid AphiaID
         - phylum: phylum name
         - class: class name
+        - order: order name
         - scientificNameID: LSID constructed from AphiaID
     """
     if not scientific_names:
@@ -622,6 +627,7 @@ def match_names_with_worms(
                             "aphiaid": int(aphiaid),
                             "phylum": match.get("phylum") or "",
                             "class": match.get("class") or "",
+                            "order": match.get("order") or "",
                             "rank": rank,
                             "scientificNameID": f"urn:lsid:marinespecies.org:taxname:{aphiaid}"
                         }
@@ -678,6 +684,7 @@ def normalize_aphiaids(
                         "valid_aphiaid": int(valid),
                         "phylum": record.get("phylum") or "",
                         "class": record.get("class") or "",
+                        "order": record.get("order") or "",
                         "rank": rank
                     }
             except Exception:
@@ -695,6 +702,8 @@ def normalize_aphiaids(
                 occ["phylum"] = data["phylum"]
             if not occ.get("class"):
                 occ["class"] = data["class"]
+            if not occ.get("order"):
+                occ["order"] = data["order"]
             # Add rank from API response
             if "rank" in data:
                 occ["rank"] = data["rank"]

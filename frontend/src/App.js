@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { interpolateSpectral } from 'd3-scale-chromatic';
 import DensityMap from './DensityMap';
@@ -15,6 +15,16 @@ const ALLOWED_EXTENSIONS = ['.txt', '.csv', '.tsv', '.zip', '.xlsx'];
 
 // Accept/reject and comments stay in the codebase, but are not shown or saved.
 const ANNOTATIONS_ENABLED = false;
+
+const genesForOccurrence = (occurrence) => {
+  if (!occurrence?.target_gene) {
+    return [];
+  }
+  return occurrence.target_gene
+    .split(',')
+    .map((gene) => gene.trim())
+    .filter(Boolean);
+};
 
 const getBadgeStyle = (value, colorScale) => {
   const numValue = parseFloat(value) || 0;
@@ -209,6 +219,9 @@ function App() {
   const [mapErrors, setMapErrors] = useState({});
   const [plotReturn, setPlotReturn] = useState(null);
   const plotScrollRef = useRef(null);
+  const [phylumFilter, setPhylumFilter] = useState('');
+  const [classFilter, setClassFilter] = useState('');
+  const [geneFilter, setGeneFilter] = useState('');
 
   const ANNOTATIONS_STORAGE_KEY = 'occurrenceAnnotations';
 
@@ -219,7 +232,105 @@ function App() {
     return `${aphiaid}|${lon}|${lat}`;
   };
 
-  const COLUMN_COUNT = ANNOTATIONS_ENABLED ? 10 : 8;
+  const COLUMN_COUNT = ANNOTATIONS_ENABLED ? 11 : 9;
+
+  const analyzedOccurrences = uploadResult?.processing?.analyzed_occurrences || [];
+
+  const phylumOptions = useMemo(() => {
+    const values = new Set();
+    analyzedOccurrences.forEach((occurrence) => {
+      if (occurrence.phylum) {
+        values.add(occurrence.phylum);
+      }
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [analyzedOccurrences]);
+
+  const classOptions = useMemo(() => {
+    const values = new Set();
+    analyzedOccurrences.forEach((occurrence) => {
+      if (phylumFilter && occurrence.phylum !== phylumFilter) {
+        return;
+      }
+      if (occurrence.class) {
+        values.add(occurrence.class);
+      }
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [analyzedOccurrences, phylumFilter]);
+
+  const geneOptions = useMemo(() => {
+    const values = new Set();
+    analyzedOccurrences.forEach((occurrence) => {
+      if (phylumFilter && occurrence.phylum !== phylumFilter) {
+        return;
+      }
+      if (classFilter && occurrence.class !== classFilter) {
+        return;
+      }
+      genesForOccurrence(occurrence).forEach((gene) => values.add(gene));
+    });
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [analyzedOccurrences, phylumFilter, classFilter]);
+
+  const filteredOccurrences = useMemo(() => {
+    return analyzedOccurrences
+      .filter((occurrence) => {
+        if (phylumFilter && occurrence.phylum !== phylumFilter) {
+          return false;
+        }
+        if (classFilter && occurrence.class !== classFilter) {
+          return false;
+        }
+        if (geneFilter && !genesForOccurrence(occurrence).includes(geneFilter)) {
+          return false;
+        }
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const da = a.density ?? Infinity;
+        const db = b.density ?? Infinity;
+        return da - db;
+      });
+  }, [analyzedOccurrences, phylumFilter, classFilter, geneFilter]);
+
+  const geneStillValid = (gene, phylum, className) => {
+    if (!gene) {
+      return true;
+    }
+    return analyzedOccurrences.some((occurrence) => {
+      if (phylum && occurrence.phylum !== phylum) {
+        return false;
+      }
+      if (className && occurrence.class !== className) {
+        return false;
+      }
+      return genesForOccurrence(occurrence).includes(gene);
+    });
+  };
+
+  const handlePhylumFilter = (value) => {
+    const nextClass = !value || !classFilter || analyzedOccurrences.some(
+      (occurrence) => occurrence.phylum === value && occurrence.class === classFilter
+    )
+      ? classFilter
+      : '';
+    setPhylumFilter(value);
+    setClassFilter(nextClass);
+    setGeneFilter((current) => (geneStillValid(current, value, nextClass) ? current : ''));
+  };
+
+  const handleClassFilter = (value) => {
+    setClassFilter(value);
+    setGeneFilter((current) => (geneStillValid(current, phylumFilter, value) ? current : ''));
+  };
+
+  useEffect(() => {
+    setPhylumFilter('');
+    setClassFilter('');
+    setGeneFilter('');
+  }, [uploadResult]);
 
   useEffect(() => {
     if (!ANNOTATIONS_ENABLED) {
@@ -326,6 +437,7 @@ function App() {
             scientificNameID: occurrence?.scientificNameID || null,
             phylum: occurrence?.phylum || null,
             class: occurrence?.class || null,
+            order: occurrence?.order || null,
             decimalLongitude: lon,
             decimalLatitude: lat,
             footprintWKT: occurrence?.footprintWKT || null,
@@ -829,9 +941,53 @@ function App() {
                 )}
               </div>
               <ScoreDotPlot
-                occurrences={uploadResult.processing.analyzed_occurrences}
+                occurrences={filteredOccurrences}
                 onPointClick={revealOccurrenceFromPlot}
               />
+              <div className="table-filters">
+                <label className="table-filter">
+                  <span>Phylum</span>
+                  <select
+                    className="form-select"
+                    value={phylumFilter}
+                    onChange={(event) => handlePhylumFilter(event.target.value)}
+                  >
+                    <option value="">All</option>
+                    {phylumOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="table-filter">
+                  <span>Class</span>
+                  <select
+                    className="form-select"
+                    value={classFilter}
+                    onChange={(event) => handleClassFilter(event.target.value)}
+                  >
+                    <option value="">All</option>
+                    {classOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="table-filter table-filter-wide">
+                  <span>Target gene</span>
+                  <select
+                    className="form-select"
+                    value={geneFilter}
+                    onChange={(event) => setGeneFilter(event.target.value)}
+                  >
+                    <option value="">All</option>
+                    {geneOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+                <span className="table-filter-count">
+                  {filteredOccurrences.length.toLocaleString()} of {analyzedOccurrences.length.toLocaleString()}
+                </span>
+              </div>
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -840,6 +996,7 @@ function App() {
                       <th>Species</th>
                       <th>Phylum</th>
                       <th>Class</th>
+                      <th>Order</th>
                       <th>Target gene</th>
                       <th>Coordinates</th>
                       <th>Density</th>
@@ -853,14 +1010,14 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {uploadResult.processing.analyzed_occurrences
-                      .slice()
-                      .sort((a, b) => {
-                        const da = a.density ?? Infinity;
-                        const db = b.density ?? Infinity;
-                        return da - db;
-                      })
-                      .map((occurrence) => {
+                    {filteredOccurrences.length === 0 && (
+                      <tr>
+                        <td className="table-filter-empty" colSpan={COLUMN_COUNT}>
+                          No occurrences match these filters.
+                        </td>
+                      </tr>
+                    )}
+                    {filteredOccurrences.map((occurrence) => {
                         const rowKey = getAnnotationKey(occurrence);
                         const annotationData = annotations[rowKey] || { annotation: '', comments: '' };
                         const annotationValue = annotationData.annotation || '';
@@ -903,6 +1060,7 @@ function App() {
                             </td>
                             <td>{occurrence.phylum || <span className="empty-cell">—</span>}</td>
                             <td>{occurrence.class || <span className="empty-cell">—</span>}</td>
+                            <td>{occurrence.order || <span className="empty-cell">—</span>}</td>
                             <td>{occurrence.target_gene || <span className="empty-cell">—</span>}</td>
                             <td>
                               {occurrence.decimalLongitude != null && occurrence.decimalLatitude != null ? (

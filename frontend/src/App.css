@@ -305,6 +305,56 @@ a:hover {
   letter-spacing: -0.01em;
 }
 
+.table-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.table-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 11rem;
+}
+
+.table-filter span {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.table-filter .form-select {
+  width: 14rem;
+  max-width: 100%;
+  padding: 0.4rem 2rem 0.4rem 0.65rem;
+  font-size: 0.8125rem;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 6 L8 10.5 L12.5 6' fill='none' stroke='%235c6570' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.8rem;
+}
+
+.table-filter-wide .form-select {
+  width: 22rem;
+}
+
+.table-filter-count {
+  margin-left: auto;
+  padding-bottom: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.table-filter-empty {
+  padding: 1.25rem 0.85rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 .score-dotplot {
   position: relative;
   margin-bottom: 1.25rem;
